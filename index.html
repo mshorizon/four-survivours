@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Four Survivors</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000000; font-family: 'Courier New', monospace; cursor: crosshair; }
+    #game-canvas { position: fixed; top: 0; left: 0; display: block; }
+
+    #hud {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; color: #fff; user-select: none;
+    }
+
+    /* ── Player panel (top-left) ── */
+    #player-panel {
+      position: absolute; top: 12px; left: 12px;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .p-card {
+      background: rgba(0,0,0,0.65);
+      border: 2px solid #444; border-radius: 4px;
+      padding: 6px 10px; min-width: 170px;
+      display: none;
+    }
+    .p-card.active { display: block; }
+    .p-card.local-player { border-color: #88ccff; }
+    .p-row { display: flex; align-items: center; gap: 8px; }
+    .p-avatar { width: 24px; height: 24px; border-radius: 3px; border: 2px solid #666; flex-shrink: 0; }
+    .p-info { flex: 1; }
+    .p-name { font-size: 11px; font-weight: bold; color: #88ccff; text-transform: uppercase; letter-spacing: 1px; }
+    .p-hp-bg { background: #330000; height: 6px; border-radius: 2px; margin: 3px 0 2px; }
+    .p-hp-fill { background: linear-gradient(90deg, #cc2222, #ff5555); height: 100%; border-radius: 2px; transition: width 0.12s; }
+    .p-ammo { font-size: 10px; color: #ffcc44; }
+    .p-dead { font-size: 10px; color: #cc2222; font-weight: bold; display: none; }
+
+    /* ── Top center title ── */
+    #top-center {
+      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+      text-align: center; pointer-events: none;
+    }
+    #game-title {
+      font-size: 18px; font-weight: bold; color: #fff;
+      text-shadow: 0 0 8px #000, 2px 2px 0 #000;
+      text-transform: uppercase; letter-spacing: 2px;
+    }
+
+    /* ── Top right ── */
+    #top-right {
+      position: absolute; top: 12px; right: 14px;
+      background: rgba(0,0,0,0.65);
+      border: 2px solid #444; border-radius: 4px;
+      padding: 8px 14px; text-align: right;
+    }
+    #wave-label { font-size: 11px; color: #aaa; text-transform: uppercase; }
+    #wave-num { font-size: 26px; font-weight: bold; color: #fff; line-height: 1; }
+    #objective { font-size: 11px; color: #88ee99; text-transform: uppercase; margin-top: 4px; }
+    #kills-display { font-size: 12px; color: #ffaa44; margin-top: 4px; }
+
+    /* ── Message overlay ── */
+    #msg {
+      position: absolute; top: 44%; left: 50%; transform: translate(-50%, -50%);
+      font-size: 30px; font-weight: bold; color: #ffdd44;
+      text-shadow: 3px 3px 0 #000, 0 0 20px rgba(0,0,0,0.8);
+      text-transform: uppercase; letter-spacing: 3px;
+      text-align: center; white-space: nowrap;
+    }
+
+    /* ── Reload bar ── */
+    #reload-bar {
+      position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
+      width: 160px; display: none;
+    }
+    #reload-label { font-size: 12px; color: #ffcc44; text-align: center; margin-bottom: 4px; }
+    #reload-bg { background: #333; height: 6px; border-radius: 3px; }
+    #reload-fill { background: #ffcc44; height: 100%; border-radius: 3px; width: 0%; transition: none; }
+
+    /* ── Weapon display ── */
+    .p-weapon {
+      font-size: 10px; color: #88aaff; text-transform: uppercase;
+      letter-spacing: 1px; margin-top: 1px;
+    }
+
+    /* ── Minimap ── */
+    #minimap {
+      position: absolute; bottom: 14px; right: 14px;
+      width: 130px; height: 130px;
+      border: 2px solid #444; border-radius: 4px;
+      background: rgba(0,0,0,0.7);
+    }
+
+    /* ── Controls hint ── */
+    #controls {
+      position: absolute; bottom: 14px; left: 12px;
+      font-size: 10px; color: #666; line-height: 1.6;
+    }
+
+    /* ── Lobby overlay ── */
+    #lobby {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(10,10,20,0.92);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 18px; color: #fff; font-family: 'Courier New', monospace;
+    }
+    #lobby h1 { font-size: 42px; letter-spacing: 6px; text-transform: uppercase; color: #ffdd44; text-shadow: 0 0 20px rgba(255,200,0,0.4); }
+    #lobby p  { font-size: 13px; color: #888; text-transform: uppercase; letter-spacing: 2px; }
+    #lobby-fields { display: flex; flex-direction: column; gap: 10px; width: 280px; }
+    #lobby-fields input {
+      background: #1a1a2a; border: 1px solid #444; color: #fff;
+      padding: 10px 14px; font-family: inherit; font-size: 14px;
+      border-radius: 3px; outline: none; text-transform: uppercase; letter-spacing: 1px;
+    }
+    #lobby-fields input:focus { border-color: #ffdd44; }
+    #join-btn {
+      background: #ffdd44; color: #111; border: none;
+      padding: 12px; font-family: inherit; font-size: 16px; font-weight: bold;
+      letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+      border-radius: 3px; transition: background 0.15s;
+    }
+    #join-btn:hover { background: #ffe866; }
+    #lobby-status { font-size: 12px; color: #55aa55; letter-spacing: 1px; min-height: 16px; }
+
+    /* ── Room waiting screen ── */
+    #room-wait {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(10,10,20,0.92);
+      display: none; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 18px; color: #fff; font-family: 'Courier New', monospace;
+    }
+    #room-wait h2 { font-size: 28px; letter-spacing: 4px; text-transform: uppercase; color: #ffdd44; }
+    #room-wait .room-code { font-size: 13px; color: #888; letter-spacing: 2px; }
+    #player-list {
+      display: flex; flex-direction: column; gap: 8px; width: 300px;
+    }
+    .player-row {
+      display: flex; align-items: center; gap: 12px;
+      background: rgba(255,255,255,0.05); border: 1px solid #333;
+      border-radius: 4px; padding: 8px 12px;
+    }
+    .player-row .pw-avatar {
+      width: 24px; height: 24px; border-radius: 3px; flex-shrink: 0;
+    }
+    .player-row .pw-name { flex: 1; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
+    .player-row .pw-ready { font-size: 11px; font-weight: bold; letter-spacing: 1px; }
+    .player-row .pw-ready.ready { color: #44dd66; }
+    .player-row .pw-ready.waiting { color: #888; }
+    #ready-btn {
+      background: #33aa44; color: #fff; border: none;
+      padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold;
+      letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+      border-radius: 3px; transition: background 0.15s; width: 300px;
+      pointer-events: all;
+    }
+    #ready-btn:hover { background: #44cc55; }
+    #ready-btn.is-ready { background: #886622; }
+    #ready-btn.is-ready:hover { background: #aa7722; }
+    #wait-status { font-size: 12px; color: #888; letter-spacing: 1px; }
+
+    /* ── Game Over overlay ── */
+    #game-over {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(10,10,20,0.93);
+      display: none; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 16px; color: #fff; font-family: 'Courier New', monospace;
+    }
+    #game-over h2 { font-size: 48px; letter-spacing: 6px; text-transform: uppercase; color: #ff4444; text-shadow: 0 0 30px rgba(255,60,60,0.5); }
+    #go-stats { font-size: 14px; color: #aaa; letter-spacing: 2px; text-align: center; line-height: 1.8; }
+    #go-stats span { color: #ffdd44; font-weight: bold; }
+    #go-player-list { display: flex; flex-direction: column; gap: 6px; width: 320px; }
+    .go-row {
+      display: flex; align-items: center; gap: 10px;
+      background: rgba(255,255,255,0.05); border: 1px solid #333;
+      border-radius: 4px; padding: 7px 12px;
+    }
+    .go-row .go-avatar { width: 20px; height: 20px; border-radius: 3px; flex-shrink: 0; }
+    .go-row .go-name { flex: 1; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+    .go-row .go-kills { font-size: 13px; color: #ffaa44; font-weight: bold; }
+    #go-ready-btn {
+      background: #33aa44; color: #fff; border: none;
+      padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold;
+      letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+      border-radius: 3px; transition: background 0.15s; width: 320px;
+      pointer-events: all; margin-top: 8px;
+    }
+    #go-ready-btn:hover { background: #44cc55; }
+    #go-ready-btn.is-ready { background: #886622; }
+    #go-ready-btn.is-ready:hover { background: #aa7722; }
+    #go-wait-status { font-size: 12px; color: #888; letter-spacing: 1px; }
+  </style>
+</head>
+<body>
+  <!-- Lobby -->
+  <div id="lobby">
+    <h1>Four Survivors</h1>
+    <p>Low-poly co-op zombie survival</p>
+    <div id="lobby-fields">
+      <input id="name-input"  placeholder="Your name"  maxlength="16" value="Survivor" />
+      <input id="room-input"  placeholder="Room code (blank = default)" maxlength="12" />
+      <button id="join-btn">Join Game</button>
+    </div>
+    <div id="lobby-status"></div>
+    <p style="font-size:11px;color:#555">WASD Move &nbsp;|&nbsp; Mouse Aim &nbsp;|&nbsp; LMB Shoot &nbsp;|&nbsp; R Reload</p>
+  </div>
+
+  <!-- Game Over screen -->
+  <div id="game-over">
+    <h2>Game Over</h2>
+    <div id="go-stats">
+      Wave reached: <span id="go-wave">—</span> &nbsp;|&nbsp; Survived: <span id="go-time">—</span>
+    </div>
+    <div id="go-player-list"></div>
+    <button id="go-ready-btn">Play Again</button>
+    <div id="go-wait-status">Waiting for all players...</div>
+  </div>
+
+  <!-- Room waiting screen -->
+  <div id="room-wait">
+    <h2>Waiting for Players</h2>
+    <div class="room-code" id="wait-room-code">Room: —</div>
+    <div id="player-list"></div>
+    <button id="ready-btn">Ready</button>
+    <div id="wait-status">Waiting for all players to ready up...</div>
+  </div>
+
+  <div id="hud">
+    <div id="player-panel">
+      <!-- 4 player cards, slots 0-3, shown dynamically -->
+      <div class="p-card" id="p-card-0">
+        <div class="p-row">
+          <div class="p-avatar" id="p-avatar-0"></div>
+          <div class="p-info">
+            <div class="p-name" id="p-name-0">P1</div>
+            <div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-0" style="width:100%"></div></div>
+            <div class="p-ammo" id="p-ammo-0">AMMO: 15/15</div>
+          </div>
+        </div>
+        <div class="p-weapon" id="p-weapon-0">PISTOL</div>
+        <div class="p-dead" id="p-dead-0">DEAD</div>
+      </div>
+      <div class="p-card" id="p-card-1">
+        <div class="p-row">
+          <div class="p-avatar" id="p-avatar-1"></div>
+          <div class="p-info">
+            <div class="p-name" id="p-name-1">P2</div>
+            <div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-1" style="width:100%"></div></div>
+            <div class="p-ammo" id="p-ammo-1">AMMO: 15/15</div>
+          </div>
+        </div>
+        <div class="p-weapon" id="p-weapon-1">PISTOL</div>
+        <div class="p-dead" id="p-dead-1">DEAD</div>
+      </div>
+      <div class="p-card" id="p-card-2">
+        <div class="p-row">
+          <div class="p-avatar" id="p-avatar-2"></div>
+          <div class="p-info">
+            <div class="p-name" id="p-name-2">P3</div>
+            <div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-2" style="width:100%"></div></div>
+            <div class="p-ammo" id="p-ammo-2">AMMO: 15/15</div>
+          </div>
+        </div>
+        <div class="p-weapon" id="p-weapon-2">PISTOL</div>
+        <div class="p-dead" id="p-dead-2">DEAD</div>
+      </div>
+      <div class="p-card" id="p-card-3">
+        <div class="p-row">
+          <div class="p-avatar" id="p-avatar-3"></div>
+          <div class="p-info">
+            <div class="p-name" id="p-name-3">P4</div>
+            <div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-3" style="width:100%"></div></div>
+            <div class="p-ammo" id="p-ammo-3">AMMO: 15/15</div>
+          </div>
+        </div>
+        <div class="p-weapon" id="p-weapon-3">PISTOL</div>
+        <div class="p-dead" id="p-dead-3">DEAD</div>
+      </div>
+    </div>
+
+    <div id="top-center">
+      <div id="game-title">☠ Zombie Horde: Survival</div>
+    </div>
+
+    <div id="top-right">
+      <div id="wave-label">Wave</div>
+      <div id="wave-num"><span id="wave">1</span></div>
+      <div id="objective">Objective: Reach Safe Room</div>
+      <div id="kills-display">Kills: <span id="kills">0</span></div>
+    </div>
+
+    <div id="msg"></div>
+
+    <div id="reload-bar">
+      <div id="reload-label">RELOADING...</div>
+      <div id="reload-bg"><div id="reload-fill"></div></div>
+    </div>
+
+    <canvas id="minimap" width="130" height="130"></canvas>
+
+    <div id="controls">
+      WASD — Move &nbsp;|&nbsp; Mouse — Aim &nbsp;|&nbsp; LMB — Shoot &nbsp;|&nbsp; R — Reload
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
