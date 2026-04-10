@@ -219,7 +219,7 @@ export class GameRoom {
 
   setReady(socketId, isReady) {
     const p = this.players.get(socketId);
-    if (!p || this.gameStarted) return;
+    if (!p || p.disconnected || this.gameStarted) return;
     p.ready = isReady;
     if (isReady) this._readySet.add(socketId); else this._readySet.delete(socketId);
     this._broadcastLobby();
@@ -249,17 +249,19 @@ export class GameRoom {
   // ── Lobby ───────────────────────────────────────────────────────────────────
 
   _broadcastLobby() {
-    const players = [...this.players.values()].map(p => ({ id: p.id, name: p.name, slot: p.slot, ready: p.ready }));
+    const active  = [...this.players.values()].filter(p => !p.disconnected);
+    const players = active.map(p => ({ id: p.id, name: p.name, slot: p.slot, ready: p.ready }));
     const voteCounts = Object.fromEntries(MAPS.map(m => [m, 0]));
     for (const v of this._votes.values()) voteCounts[v] = (voteCounts[v] ?? 0) + 1;
     this.io.to(this.id).emit('lobbyState', {
-      players, readyCount: this._readySet.size, totalCount: this.players.size, voteCounts,
+      players, readyCount: active.filter(p => p.ready).length, totalCount: active.length, voteCounts,
     });
   }
 
   _checkAllReady() {
-    if (this.players.size === 0) return;
-    if ([...this.players.values()].every(p => p.ready)) this._startGame();
+    const active = [...this.players.values()].filter(p => !p.disconnected);
+    if (active.length === 0) return;
+    if (active.every(p => p.ready)) this._startGame();
   }
 
   // ── Game start / map transition ─────────────────────────────────────────────
