@@ -364,7 +364,8 @@ function syncPlayerLights(players) {
     }
     if (!playerLights.has(p.id)) {
       // SpotLight: warm white flashlight cone, no shadows (perf)
-      const light = new THREE.SpotLight(0xfff0cc, 4.5, 24, Math.PI / 5.5, 0.40, 1.2);
+      // r170 physical units: intensity in candela, decay=2, distance=0 → no cutoff
+      const light = new THREE.SpotLight(0xfff0cc, 80, 0, Math.PI / 5.5, 0.40, 2);
       light.castShadow = false;
       const tgt = new THREE.Object3D();
       light.target = tgt;
