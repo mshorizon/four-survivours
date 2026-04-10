@@ -37,16 +37,12 @@ const CAM_OFFSET = new THREE.Vector3(0, 18, 14);
 camera.position.copy(CAM_OFFSET);
 camera.lookAt(0, 0, 0);
 
-// Lights
-scene.add(new THREE.AmbientLight(0xffffff, 1.4));
-const sun = new THREE.DirectionalLight(0xffeedd, 1.0);
-sun.position.set(5, 20, 18); sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
-sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
-sun.shadow.camera.left = -35; sun.shadow.camera.right = 35;
-sun.shadow.camera.top = 35; sun.shadow.camera.bottom = -35;
+// Lights — kept very dim; flashlight SpotLights per player provide main illumination
+scene.add(new THREE.AmbientLight(0x111122, 0.06));
+const sun = new THREE.DirectionalLight(0xffeedd, 0.10);
+sun.position.set(5, 20, 18); sun.castShadow = false;
 scene.add(sun, sun.target);
-const fill = new THREE.DirectionalLight(0x8899cc, 0.4);
+const fill = new THREE.DirectionalLight(0x8899cc, 0.04);
 fill.position.set(-8, 10, -10);
 scene.add(fill);
 
@@ -72,8 +68,9 @@ function loadMap(mapId) {
   scene.add(mapGroup);
   const result = buildMap(mapGroup, mapId);
   fireLights = result.fireLights ?? [];
-  scene.background = new THREE.Color(result.fogColor ?? 0x3a3a4e);
-  scene.fog = new THREE.Fog(result.fogColor ?? 0x3a3a4e, result.fogNear ?? 35, result.fogFar ?? 90);
+  // Fog of war: black background + tight black fog so flashlight edges blend into darkness
+  scene.background = new THREE.Color(0x000000);
+  scene.fog = new THREE.Fog(0x000000, 9, 22);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -243,6 +240,7 @@ function makePickupMesh(weapon) {
 // Entity maps
 // ─────────────────────────────────────────────────────────────────────────────
 const playerMeshes    = new Map();
+const playerLights    = new Map(); // id → { light: SpotLight, tgt: Object3D }
 const enemyMeshes     = new Map();
 const bulletMeshes    = new Map();
 const acidMeshes      = new Map();
@@ -356,6 +354,36 @@ function syncGrenades(grenades) {
     if (!seen.has(id)) { scene.remove(mesh); grenadeMeshes.delete(id); }
 }
 
+function syncPlayerLights(players) {
+  const seen = new Set();
+  for (const p of players) {
+    seen.add(p.id);
+    if (!p.alive) {
+      if (playerLights.has(p.id)) playerLights.get(p.id).light.visible = false;
+      continue;
+    }
+    if (!playerLights.has(p.id)) {
+      // SpotLight: warm white flashlight cone, no shadows (perf)
+      const light = new THREE.SpotLight(0xfff0cc, 4.5, 24, Math.PI / 5.5, 0.40, 1.2);
+      light.castShadow = false;
+      const tgt = new THREE.Object3D();
+      light.target = tgt;
+      scene.add(light, tgt);
+      playerLights.set(p.id, { light, tgt });
+    }
+    const { light, tgt } = playerLights.get(p.id);
+    light.visible = true;
+    // Local player aims at mouse; others use their server angle
+    const angle = (p.id === net.playerId) ? getMouseAngle() : p.angle;
+    light.position.set(p.x, 2.0, p.z);
+    tgt.position.set(p.x + Math.sin(angle) * 18, 0, p.z + Math.cos(angle) * 18);
+    tgt.updateMatrixWorld();
+  }
+  for (const [id, { light, tgt }] of playerLights) {
+    if (!seen.has(id)) { scene.remove(light); scene.remove(tgt); playerLights.delete(id); }
+  }
+}
+
 function syncPickups(pickups, now) {
   for (const pk of pickups) {
     if (!pickupMeshes.has(pk.id)) {
@@ -460,6 +488,7 @@ net.socket.on('gs', (state) => interp.push(state));
 net.socket.on('connect',       () => { document.getElementById('lobby-status').textContent = 'Connected ✓ — click Join Game'; });
 net.socket.on('connect_error', (e) => { document.getElementById('lobby-status').textContent = `Connection error: ${e.message}`; });
 net.socket.on('disconnect',    () => { document.getElementById('lobby-status').textContent = 'Disconnected'; });
+net.socket.on('roomClosed',    () => { _returnToLobby(); showMsg('Room closed by host', '#ff8844', 3000); });
 
 net.onJoined = ({ slot, roomId, token, reconnected }) => {
   mySlot = slot;
@@ -509,6 +538,7 @@ net.socket.on('gameStart', ({ wave, mapId }) => {
   document.getElementById('room-wait').style.display = 'none';
   document.getElementById('game-over').style.display = 'none';
   document.getElementById('victory').style.display   = 'none';
+  document.getElementById('hud').style.display       = '';
   _isReady = false; _goReady = false; _vicReady = false;
   document.getElementById('ready-btn').textContent = 'Ready';
   document.getElementById('ready-btn').classList.remove('is-ready');
@@ -533,6 +563,8 @@ net.socket.on('gameStart', ({ wave, mapId }) => {
     m.forEach(v => scene.remove(v.mesh ?? v));
     m.clear();
   });
+  playerLights.forEach(({ light, tgt }) => { scene.remove(light); scene.remove(tgt); });
+  playerLights.clear();
 });
 
 net.socket.on('gameOver', ({ wave, survivalTime, players }) => {
@@ -906,13 +938,47 @@ document.getElementById('vic-ready-btn')?.addEventListener('click', () => {
   btn.classList.toggle('is-ready', _vicReady);
 });
 
-// ── Settings overlay ──────────────────────────────────────────────────────────
-document.getElementById('settings-btn')?.addEventListener('click', () => {
-  document.getElementById('settings-overlay').style.display = 'flex';
+// ── Settings / Pause overlay ──────────────────────────────────────────────────
+const _settingsOverlay = document.getElementById('settings-overlay');
+const _openPause  = () => { _settingsOverlay.style.display = 'flex'; };
+const _closePause = () => { _settingsOverlay.style.display = 'none'; };
+
+document.getElementById('settings-btn')?.addEventListener('click', _openPause);
+document.getElementById('close-settings')?.addEventListener('click', _closePause);
+
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Escape') return;
+  if (!gameStarted) return;
+  _settingsOverlay.style.display === 'none' ? _openPause() : _closePause();
 });
-document.getElementById('close-settings')?.addEventListener('click', () => {
-  document.getElementById('settings-overlay').style.display = 'none';
-});
+
+function _returnToLobby() {
+  _closePause();
+  gameStarted = false;
+  localStorage.removeItem('fsReconnect');
+  // Tell server to permanently remove us (skips reconnect hold)
+  net.socket.emit('leaveRoom');
+  net.playerId = null;
+  net.slot     = null;
+  // Clear all entity meshes from scene
+  [playerMeshes, enemyMeshes, bulletMeshes, acidMeshes, pickupMeshes, healthpackMeshes, grenadeMeshes].forEach(m => {
+    m.forEach(v => scene.remove(v.mesh ?? v));
+    m.clear();
+  });
+  playerLights.forEach(({ light, tgt }) => { scene.remove(light); scene.remove(tgt); });
+  playerLights.clear();
+  for (let i = _slamRings.length - 1; i >= 0; i--) { scene.remove(_slamRings[i].mesh); }
+  _slamRings.length = 0;
+  // Hide all in-game screens, show lobby
+  ['room-wait','game-over','victory','hud'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  document.getElementById('lobby').style.display = 'flex';
+}
+
+document.getElementById('back-to-menu-btn')?.addEventListener('click', _returnToLobby);
+document.getElementById('room-wait-back-btn')?.addEventListener('click', _returnToLobby);
 
 // ── Volume slider ─────────────────────────────────────────────────────────────
 document.getElementById('volume-slider')?.addEventListener('input', (e) => {
@@ -930,13 +996,23 @@ async function loadRooms() {
       return;
     }
     list.innerHTML = data.map(r =>
-      `<div class="room-item" style="cursor:pointer" data-room="${r.id}">
-         <b>${r.id}</b> — ${r.playerCount}/4 players, wave ${r.wave ?? 1}${r.gameStarted ? ' (in progress)' : ''}
+      `<div class="room-item" data-room="${r.id}" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+         <span style="flex:1"><b>${r.id}</b> — ${r.playerCount}/4 players, wave ${r.wave ?? 1}${r.gameStarted ? ' (in progress)' : ''}</span>
+         <button class="room-delete-btn" data-room="${r.id}" title="Delete room" style="background:#c0392b;border:none;color:#fff;border-radius:4px;padding:2px 7px;cursor:pointer;flex-shrink:0">✕</button>
        </div>`
     ).join('');
-    list.querySelectorAll('.room-item[data-room]').forEach(el => {
-      el.addEventListener('click', () => {
+    list.querySelectorAll('.room-item').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.classList.contains('room-delete-btn')) return;
         document.getElementById('room-input').value = el.dataset.room;
+      });
+    });
+    list.querySelectorAll('.room-delete-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const roomId = btn.dataset.room;
+        await fetch(`/api/rooms/${encodeURIComponent(roomId)}`, { method: 'DELETE' });
+        loadRooms();
       });
     });
   } catch (_) {
@@ -1196,6 +1272,7 @@ function loop() {
     try {
       applyEffects(state, dt);
       syncPlayers(state.players);
+      syncPlayerLights(state.players);
       syncEnemies(state.enemies);
       syncBullets(state.bullets ?? []);
       syncAcidBlobs(state.acidBlobs ?? []);
