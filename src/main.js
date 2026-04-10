@@ -628,6 +628,155 @@ net.socket.on('grenadeExplode', ({ x, z, radius }) => {
   _slamRings.push({ mesh: ring, life: 0.6, maxLife: 0.6 });
 });
 
+// ── Downed / Revive ──────────────────────────────────────────────────────────
+net.socket.on('playerDowned', ({ playerId }) => {
+  if (playerId === net.playerId) showMsg('YOU ARE DOWN! Teammates can revive you.', '#ff6600', 0);
+  else {
+    const st = interp.get() ?? net.latestState;
+    const p  = st?.players?.find(q => q.id === playerId);
+    if (p) showMsg(`${p.name} is DOWN!`, '#ff6600', 3000);
+  }
+  shakeCamera(0.25);
+});
+
+net.socket.on('playerRevived', ({ playerId, revivedBy }) => {
+  const st   = interp.get() ?? net.latestState;
+  const p    = st?.players?.find(q => q.id === playerId);
+  const r    = st?.players?.find(q => q.id === revivedBy);
+  const name = p?.name ?? 'Player';
+  const rname= r?.name ?? 'teammate';
+  showMsg(`${name} revived by ${rname}!`, '#44ff88', 3000);
+});
+
+// ── Tank charge ──────────────────────────────────────────────────────────────
+net.socket.on('tankCharge', () => {
+  showMsg('TANK CHARGING!', '#ff2200', 1500);
+  shakeCamera(0.2);
+});
+
+// ── Acid puddle ──────────────────────────────────────────────────────────────
+net.socket.on('acidPuddle', ({ x, z, radius, duration }) => {
+  // Visual: green translucent disc
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, 0.05, 24),
+    new THREE.MeshBasicMaterial({ color: 0x44ff22, transparent: true, opacity: 0.45, depthWrite: false })
+  );
+  mesh.position.set(x, 0.03, z);
+  scene.add(mesh);
+  // Fade + remove after duration
+  const startTime = performance.now();
+  function fadeAcid() {
+    const age = (performance.now() - startTime) / 1000;
+    if (age >= duration) { scene.remove(mesh); mesh.geometry.dispose(); return; }
+    mesh.material.opacity = 0.45 * (1 - age / duration);
+    requestAnimationFrame(fadeAcid);
+  }
+  requestAnimationFrame(fadeAcid);
+});
+
+// ── Perk phase ────────────────────────────────────────────────────────────────
+const $perkOverlay = document.getElementById('perk-overlay');
+const $perkCards   = document.getElementById('perk-cards');
+const $perkTimer   = document.getElementById('perk-timer');
+let _perkTimerInterval = null;
+
+net.socket.on('perkOffer', ({ options, timeLeft, wave }) => {
+  if (!$perkOverlay || !$perkCards) return;
+  $perkCards.innerHTML = '';
+  for (const perk of options) {
+    const btn = document.createElement('button');
+    btn.className = 'perk-card';
+    btn.innerHTML = `<div class="perk-name">${perk.name}</div><div class="perk-desc">${perk.desc}</div>`;
+    btn.addEventListener('click', () => {
+      net.socket.emit('perkChoice', perk.id);
+      $perkOverlay.style.display = 'none';
+      clearInterval(_perkTimerInterval);
+    });
+    $perkCards.appendChild(btn);
+  }
+  let secs = Math.ceil(timeLeft);
+  if ($perkTimer) $perkTimer.textContent = secs;
+  $perkOverlay.style.display = 'flex';
+  clearInterval(_perkTimerInterval);
+  _perkTimerInterval = setInterval(() => {
+    secs--;
+    if ($perkTimer) $perkTimer.textContent = secs;
+    if (secs <= 0) clearInterval(_perkTimerInterval);
+  }, 1000);
+  showMsg(`WAVE ${wave} — CHOOSE A PERK!`, '#ffdd44', 0);
+});
+
+net.socket.on('perkApplied', ({ perk }) => {
+  showMsg(`PERK: ${perk.name}`, '#aaffdd', 3000);
+});
+
+net.socket.on('perkPhaseEnd', () => {
+  if ($perkOverlay) $perkOverlay.style.display = 'none';
+  clearInterval(_perkTimerInterval);
+  $msg.textContent = '';
+});
+
+net.socket.on('perkPhaseStart', () => {
+  // Non-eligible players (spectating) just see a message
+  if ($perkOverlay?.style.display !== 'flex') {
+    showMsg('PERK SELECTION...', '#aaffdd', 0);
+  }
+});
+
+// ── Beacon ───────────────────────────────────────────────────────────────────
+net.socket.on('beaconLanded', ({ x, z, duration, radius }) => {
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius, radius, 0.08, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffdd44, transparent: true, opacity: 0.35, depthWrite: false })
+  );
+  mesh.position.set(x, 0.05, z);
+  scene.add(mesh);
+  const pulse = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.3, 0.3, 0.5, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffdd44 })
+  );
+  pulse.position.set(x, 0.25, z);
+  scene.add(pulse);
+  const start = performance.now();
+  function fadeBeacon() {
+    const age = (performance.now() - start) / 1000;
+    if (age >= duration) { scene.remove(mesh); scene.remove(pulse); mesh.geometry.dispose(); return; }
+    mesh.material.opacity = 0.35 * (1 - age / duration);
+    pulse.position.y = 0.25 + Math.sin(age * 4) * 0.15;
+    requestAnimationFrame(fadeBeacon);
+  }
+  requestAnimationFrame(fadeBeacon);
+  showMsg('BEACON DEPLOYED!', '#ffdd44', 2000);
+});
+
+// ── Jumper pin ────────────────────────────────────────────────────────────────
+net.socket.on('playerPinned', ({ playerId }) => {
+  if (playerId === net.playerId) {
+    showMsg('PINNED! Teammate must rescue you!', '#ff4400', 0);
+    shakeCamera(0.3);
+  } else {
+    const st = interp.get() ?? net.latestState;
+    const p  = st?.players?.find(q => q.id === playerId);
+    if (p) showMsg(`${p.name} is PINNED!`, '#ff4400', 3000);
+  }
+});
+
+net.socket.on('playerUnpinned', ({ playerId }) => {
+  if (playerId === net.playerId) showMsg('RESCUED!', '#44ff88', 2000);
+});
+
+// ── Smoker tongue ─────────────────────────────────────────────────────────────
+net.socket.on('tongueAttached', ({ playerId }) => {
+  if (playerId === net.playerId) {
+    showMsg('GRABBED by smoker! Teammate must rescue!', '#aa44ff', 0);
+    shakeCamera(0.25);
+  }
+});
+
+net.socket.on('tongueRescued', ({ playerId }) => {
+  if (playerId === net.playerId) showMsg('RESCUED from tongue!', '#44ff88', 2000);
+});
+
 // ── Victory ──────────────────────────────────────────────────────────────────
 net.onVictory = ({ wave, survivalTime, players }) => {
   gameStarted = false;
@@ -826,10 +975,23 @@ function updateHUD(state) {
     card.classList.toggle('local-player', p.id === net.playerId);
     document.getElementById(`p-avatar-${s}`).style.background = SLOT_HEX[s] ?? '#fff';
     document.getElementById(`p-name-${s}`).textContent  = p.name;
-    document.getElementById(`p-hp-${s}`).style.width    = (p.hp / PLAYER_MAX_HP * 100).toFixed(1) + '%';
-    document.getElementById(`p-ammo-${s}`).textContent  = p.alive ? `AMMO: ${p.ammo}/${WEAPONS[p.weapon]?.ammoMax ?? '?'}` : '';
+    document.getElementById(`p-ammo-${s}`).textContent  = (p.alive && !p.downed) ? `AMMO: ${p.ammo}/${WEAPONS[p.weapon]?.ammoMax ?? '?'}` : '';
     document.getElementById(`p-weapon-${s}`).textContent = p.alive ? (p.weapon?.toUpperCase() ?? '') : '';
-    document.getElementById(`p-dead-${s}`).style.display = (!p.alive && !p.disconnected) ? 'block' : 'none';
+    document.getElementById(`p-dead-${s}`).style.display = (!p.alive && !p.downed && !p.disconnected) ? 'block' : 'none';
+    const downEl = document.getElementById(`p-downed-${s}`);
+    if (downEl) downEl.style.display = p.downed ? 'block' : 'none';
+    const revBar = document.getElementById(`p-revive-bar-${s}`);
+    if (revBar) revBar.style.width = p.downed ? ((p.reviveProgress ?? 0) * 100).toFixed(1) + '%' : '0%';
+    const hpBar  = document.getElementById(`p-hp-${s}`);
+    if (hpBar) {
+      if (p.downed) {
+        hpBar.style.width = ((p.downedHp ?? 0) / 50 * 100).toFixed(1) + '%';
+        hpBar.style.background = '#ff6600';
+      } else {
+        hpBar.style.width = (p.hp / PLAYER_MAX_HP * 100).toFixed(1) + '%';
+        hpBar.style.background = '';
+      }
+    }
     const dcEl = document.getElementById(`p-dc-${s}`);
     if (dcEl) dcEl.style.display = p.disconnected ? 'block' : 'none';
     if (card) card.classList.toggle('is-dashing', !!p.dashing);
@@ -848,6 +1010,11 @@ function updateHUD(state) {
     document.getElementById('hp-pack-count').textContent = me.healthpacks;
     document.getElementById('use-healthpack-btn').disabled = me.healthpacks === 0 || me.hp >= PLAYER_MAX_HP;
     document.getElementById('grenade-count').textContent = me.grenadeCount ?? 0;
+    const beaconEl = document.getElementById('beacon-count');
+    if (beaconEl) beaconEl.textContent = me.beaconCount ?? 0;
+    // Pinned/pulled status
+    const pinnedEl = document.getElementById('pinned-msg');
+    if (pinnedEl) pinnedEl.style.display = (me.pinnedBy || me.pulledBy) ? 'block' : 'none';
   } else {
     actionBar.style.display = 'none';
   }
@@ -911,9 +1078,9 @@ function drawMinimap(state) {
   // Players
   if (state.players) {
     for (const p of state.players) {
-      if (!p.alive) continue;
+      if (!p.alive && !p.downed) continue;
       const [px, pz] = w2m(p.x, p.z);
-      const col = SLOT_HEX[p.slot] ?? '#ffffff';
+      const col = p.downed ? '#ff6600' : (SLOT_HEX[p.slot] ?? '#ffffff');
       mmCtx.fillStyle = col;
       mmCtx.beginPath(); mmCtx.arc(px, pz, 3.5, 0, Math.PI*2); mmCtx.fill();
       if (p.id === net.playerId) {
@@ -943,8 +1110,8 @@ function shakeCamera(amount) { _shakeAmt = Math.max(_shakeAmt, amount); }
 function followLocalPlayer(state) {
   const me = state?.players?.find(p => p.id === net.playerId);
 
-  // Spectator: follow alive player when local player is dead
-  if (!me?.alive) {
+  // Spectator: follow alive player when local player is truly dead (not downed)
+  if (!me?.alive && !me?.downed) {
     const target = state?.players?.find(p => p.alive);
     if (target) {
       _camTarget.set(target.x + CAM_OFFSET.x, CAM_OFFSET.y, target.z + CAM_OFFSET.z);
@@ -1013,6 +1180,7 @@ function loop() {
     const doReload  = input.consumeReload();
     const doDash    = input.consumeDash();
     const doGrenade = input.consumeGrenade();
+    const doBeacon  = input.consumeBeacon();
     if (doReload)  audio.reload();
     if (doDash)    audio.dash();
     net.sendInput({
@@ -1020,7 +1188,7 @@ function loop() {
       s: input.isDown('KeyS') || input.isDown('ArrowDown'),
       a: input.isDown('KeyA') || input.isDown('ArrowLeft'),
       d: input.isDown('KeyD') || input.isDown('ArrowRight'),
-    }, getMouseAngle(), input.lmb, doReload, input.consumeUse(), doDash, doGrenade);
+    }, getMouseAngle(), input.lmb, doReload, input.consumeUse(), doDash, doGrenade, doBeacon);
   }
 
   const state = interp.get() ?? net.latestState;

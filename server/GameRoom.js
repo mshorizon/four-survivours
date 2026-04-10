@@ -18,6 +18,9 @@ import {
   TANK_CHARGE_CD, TANK_CHARGE_SPEED, TANK_CHARGE_DURATION, TANK_CHARGE_DAMAGE,
   ACID_PUDDLE_DURATION, ACID_PUDDLE_RADIUS, ACID_PUDDLE_DRAIN,
   PERK_WAVE_INTERVAL, PERK_SELECT_TIME, PERKS,
+  JUMPER_PIN_DAMAGE, JUMPER_RESCUE_RANGE,
+  TONGUE_SPEED, TONGUE_RANGE, TONGUE_HP, TONGUE_PULL_SPEED,
+  BEACON_MAX, BEACON_STARTING, BEACON_DURATION, BEACON_ATTRACT_RADIUS,
 } from '../shared/constants.js';
 import { MAP_COLLIDERS, PLAYER_RADIUS, ENEMY_RADII } from '../shared/colliders.js';
 import { FlowField } from './pathfinding/FlowField.js';
@@ -64,6 +67,9 @@ export class GameRoom {
     this._healthpacks = HEALTHPACK_POSITIONS.map(h => ({ ...h, respawnTimer: 0 }));
     this._grenadeProj = [];
     this._acidPuddles = [];
+    this._tongues     = [];
+    this._beacons     = [];
+    this._nextTongueId = 1;
     this._perkPhase   = false;
     this._perkTimer   = 0;
     this._perkChoices = new Map(); // socketId → perkId
@@ -147,12 +153,13 @@ export class GameRoom {
       x: start.x, z: start.z, angle: 0,
       hp: PLAYER_MAX_HP, ammo: WEAPONS.pistol.ammoMax,
       alive: true, reloading: false,
-      weapon: 'pistol', healthpacks: 0, grenadeCount: GRENADE_MAX,
+      weapon: 'pistol', healthpacks: 0, grenadeCount: GRENADE_MAX, beaconCount: BEACON_STARTING,
       inSafeZone: false, ready: false, disconnected: false,
       appearance: appearance ?? { ...DEFAULT_APPEARANCE },
       _reloadTimer: 0, _shootCd: 0, _useCd: 0,
       _dashCd: 0, _dashTime: 0, _input: {},
       downed: false, downedHp: 0, _reviveProgress: 0,
+      pinnedBy: null, pulledBy: null,
       _perkMaxHp: PLAYER_MAX_HP, _perkReloadMult: 1.0, _perkSpeedMult: 1.0,
       _perkDamageMult: 1.0, _perkDamageTaken: 1.0, _perkDashCdBonus: 0,
     });
@@ -280,6 +287,8 @@ export class GameRoom {
     this.bullets    = [];
     this.acidBlobs  = [];
     this._grenadeProj = [];
+    this._tongues     = [];
+    this._beacons     = [];
     this._waveTimer = -1;
     this._safeRoomOpen = false;
     this._completing   = false;
@@ -287,6 +296,10 @@ export class GameRoom {
     this._pickups.forEach(p => { p.respawnTimer = 0; });
     this._healthpacks.forEach(h => { h.respawnTimer = 0; });
     this._flowField = new FlowField(this.mapId);
+    this._acidPuddles = [];
+    this._perkPhase   = false;
+    this._perkChoices.clear();
+    this._perkOptions.clear();
 
     this.players.forEach(p => {
       const s = _randomSpawn();
@@ -294,10 +307,14 @@ export class GameRoom {
         x: s.x, z: s.z, hp: PLAYER_MAX_HP,
         ammo: WEAPONS.pistol.ammoMax, alive: true,
         reloading: false, weapon: 'pistol',
-        healthpacks: 0, grenadeCount: GRENADE_MAX,
+        healthpacks: 0, grenadeCount: GRENADE_MAX, beaconCount: BEACON_STARTING,
         inSafeZone: false, disconnected: false,
         _reloadTimer: 0, _shootCd: 0, _useCd: 0,
         _dashCd: 0, _dashTime: 0, _input: {},
+        downed: false, downedHp: 0, _reviveProgress: 0,
+        pinnedBy: null, pulledBy: null,
+        _perkMaxHp: PLAYER_MAX_HP, _perkReloadMult: 1.0, _perkSpeedMult: 1.0,
+        _perkDamageMult: 1.0, _perkDamageTaken: 1.0, _perkDashCdBonus: 0,
       });
     });
 
@@ -345,13 +362,22 @@ export class GameRoom {
       this.io.to(this.id).emit('safeRoomOpen');
     }
 
+    if (this._perkPhase) {
+      this._perkTimer -= DT;
+      if (this._perkTimer <= 0) this._finishPerkPhase();
+    }
+
     this._flowField?.update(DT, [...this.players.values()]);
     this._updatePlayers();
+    this._updateRevive();
     this._updateBullets();
     this._updateEnemies();
     this._separateCharacters();
     this._updateAcidBlobs();
     this._updateGrenades();
+    this._updateAcidPuddles();
+    this._updateTongues();
+    this._updateBeacons();
     this._updatePickups();
     this._updateHealthpacks();
     this._checkWave();
@@ -362,7 +388,27 @@ export class GameRoom {
 
   _updatePlayers() {
     this.players.forEach(p => {
-      if (!p.alive || p.inSafeZone || p.disconnected) return;
+      if (p.disconnected) return;
+
+      // Downed — slow crawl only
+      if (p.downed) {
+        const { w: fw, a, s, d, mouseAngle } = p._input;
+        let dx = 0, dz = 0;
+        if (fw) dz -= 1; if (s) dz += 1;
+        if (a)  dx -= 1; if (d) dx += 1;
+        if (dx !== 0 || dz !== 0) {
+          const len = Math.sqrt(dx*dx + dz*dz);
+          const crawlSpeed = PLAYER_SPEED * 0.25;
+          const nx = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.x + (dx/len)*crawlSpeed*DT));
+          const nz = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.z + (dz/len)*crawlSpeed*DT));
+          if (!this._blocked(nx, p.z, PLAYER_RADIUS)) p.x = nx;
+          if (!this._blocked(p.x, nz, PLAYER_RADIUS)) p.z = nz;
+        }
+        if (mouseAngle !== undefined) p.angle = mouseAngle;
+        return;
+      }
+
+      if (!p.alive || p.inSafeZone) return;
       const w = WEAPONS[p.weapon];
 
       // Timers
@@ -373,14 +419,27 @@ export class GameRoom {
       p._dashCd -= DT;
       p._useCd  -= DT;
 
-      const { w: fw, a, s, d, mouseAngle, shoot, reload, useHealthpack, dash, grenade } = p._input;
+      const { w: fw, a, s, d, mouseAngle, shoot, reload, useHealthpack, dash, grenade, beacon } = p._input;
+
+      // Pinned by jumper — can't move or shoot
+      if (p.pinnedBy) {
+        if (mouseAngle !== undefined) p.angle = mouseAngle;
+        return;
+      }
+      // Pulled by smoker tongue — movement handled by _updateTongues
+      if (p.pulledBy) {
+        if (mouseAngle !== undefined) p.angle = mouseAngle;
+        return;
+      }
+
       let dx = 0, dz = 0;
       if (fw) dz -= 1; if (s) dz += 1;
       if (a)  dx -= 1; if (d) dx += 1;
 
       // Dash (Space) — instant burst in aimed direction
+      const effectiveDashCd = Math.max(0.2, DASH_CD - p._perkDashCdBonus);
       if (dash && p._dashCd <= 0) {
-        p._dashCd  = DASH_CD;
+        p._dashCd  = effectiveDashCd;
         p._dashTime = DASH_IFRAME;
         const ddx = Math.sin(p.angle) * DASH_DISTANCE;
         const ddz = Math.cos(p.angle) * DASH_DISTANCE;
@@ -396,18 +455,22 @@ export class GameRoom {
       // WASD movement
       if (dx !== 0 || dz !== 0) {
         const len = Math.sqrt(dx*dx + dz*dz);
-        const nx = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.x + (dx/len)*PLAYER_SPEED*DT));
-        const nz = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.z + (dz/len)*PLAYER_SPEED*DT));
+        const spd = PLAYER_SPEED * p._perkSpeedMult;
+        const nx = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.x + (dx/len)*spd*DT));
+        const nz = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.z + (dz/len)*spd*DT));
         if (!this._blocked(nx, p.z, PLAYER_RADIUS)) p.x = nx;
         if (!this._blocked(p.x, nz, PLAYER_RADIUS)) p.z = nz;
       }
 
       if (mouseAngle !== undefined) p.angle = mouseAngle;
-      if (reload && !p.reloading && p.ammo < w.ammoMax) { p.reloading = true; p._reloadTimer = w.reloadTime; }
+      if (reload && !p.reloading && p.ammo < w.ammoMax) {
+        p.reloading = true;
+        p._reloadTimer = w.reloadTime * p._perkReloadMult;
+      }
 
       // Use healthpack (E)
-      if (useHealthpack && p.healthpacks > 0 && p.hp < PLAYER_MAX_HP && p._useCd <= 0) {
-        p.hp = Math.min(PLAYER_MAX_HP, p.hp + HEALTHPACK_HEAL);
+      if (useHealthpack && p.healthpacks > 0 && p.hp < p._perkMaxHp && p._useCd <= 0) {
+        p.hp = Math.min(p._perkMaxHp, p.hp + HEALTHPACK_HEAL);
         p.healthpacks--;
         p._useCd = 0.5;
       }
@@ -421,6 +484,15 @@ export class GameRoom {
           dx: Math.sin(p.angle), dz: Math.cos(p.angle),
           fuse: GRENADE_FUSE,
         });
+      }
+
+      // Beacon (F) — attract enemies
+      if (beacon && p.beaconCount > 0) {
+        p.beaconCount--;
+        const bx = p.x + Math.sin(p.angle) * 4;
+        const bz = p.z + Math.cos(p.angle) * 4;
+        this._beacons.push({ x: bx, z: bz, timer: BEACON_DURATION });
+        this.io.to(this.id).emit('beaconLanded', { x: bx, z: bz, duration: BEACON_DURATION, radius: BEACON_ATTRACT_RADIUS });
       }
 
       // Shoot
@@ -457,18 +529,38 @@ export class GameRoom {
     }
     for (const b of this.bullets) {
       if (b.dist >= b.range) continue;
+      const shooter = this.players.get(b.owner);
+      const dmgMult = shooter?._perkDamageMult ?? 1.0;
       for (const e of this.enemies) {
         if (e.dead) continue;
         const dx = b.x - e.x, dz = b.z - e.z;
         if (dx*dx + dz*dz < 0.36) {
-          e.hp -= b.damage; b.dist = b.range;
+          e.hp -= b.damage * dmgMult; b.dist = b.range;
           if (e.hp <= 0) {
             e.dead = true;
+            if (e.type === 'spitter') {
+              this._acidPuddles.push({ x: e.x, z: e.z, timer: ACID_PUDDLE_DURATION });
+              this.io.to(this.id).emit('acidPuddle', { x: e.x, z: e.z, radius: ACID_PUDDLE_RADIUS, duration: ACID_PUDDLE_DURATION });
+            }
+            if (e.type === 'jumper') this._clearJumperPin(e.id);
             const n = (this._kills.get(b.owner) ?? 0) + 1;
             this._kills.set(b.owner, n);
             const killer = this.players.get(b.owner);
             if (killer) this.io.to(this.id).emit('kill', { name: killer.name, slot: killer.slot, enemyType: e.type });
           }
+          break;
+        }
+      }
+    }
+    // Bullets vs tongues
+    for (const b of this.bullets) {
+      if (b.dist >= b.range) continue;
+      for (const t of this._tongues) {
+        if (t.dead || t.attached) continue;
+        const tdx = b.x - t.x, tdz = b.z - t.z;
+        if (tdx*tdx + tdz*tdz < 0.25) {
+          t.hp -= b.damage; b.dist = b.range;
+          if (t.hp <= 0) { t.dead = true; this.io.to(this.id).emit('tongueDead', { tongueId: t.id }); }
           break;
         }
       }
@@ -480,7 +572,7 @@ export class GameRoom {
   // ── Enemies ─────────────────────────────────────────────────────────────────
 
   _updateEnemies() {
-    const alive = [...this.players.values()].filter(p => p.alive && !p.inSafeZone && !p.disconnected);
+    const alive = [...this.players.values()].filter(p => p.alive && !p.downed && !p.inSafeZone && !p.disconnected);
     if (alive.length === 0) return;
     for (const e of this.enemies) {
       const stats = ENEMY_TYPES[e.type] ?? ENEMY_TYPES.walker;
@@ -494,10 +586,24 @@ export class GameRoom {
       if (dist > 0.05) e.angle = Math.atan2(dx, dz);
 
       const er = ENEMY_RADII[e.type] ?? 0.4;
+
+      // Beacon redirect: if any active beacon, move toward nearest beacon instead
+      let targetX = nearest.x, targetZ = nearest.z;
+      if (this._beacons.length > 0) {
+        let bDist2 = Infinity, bestB = null;
+        for (const b of this._beacons) {
+          const bd2 = (b.x-e.x)**2 + (b.z-e.z)**2;
+          if (bd2 < BEACON_ATTRACT_RADIUS * BEACON_ATTRACT_RADIUS && bd2 < bDist2) { bDist2 = bd2; bestB = b; }
+        }
+        if (bestB) { targetX = bestB.x; targetZ = bestB.z; }
+      }
+      const tdx = targetX - e.x, tdz = targetZ - e.z;
+      const tdist = Math.sqrt(tdx*tdx + tdz*tdz);
+
       const ff = this._flowField?.dir(e.x, e.z);
-      const hasFF = ff && (ff.dx !== 0 || ff.dz !== 0);
-      const mvDx = hasFF ? ff.dx : (dist > 0 ? dx / dist : 0);
-      const mvDz = hasFF ? ff.dz : (dist > 0 ? dz / dist : 0);
+      const hasFF = ff && (ff.dx !== 0 || ff.dz !== 0) && targetX === nearest.x;
+      const mvDx = hasFF ? ff.dx : (tdist > 0 ? tdx / tdist : 0);
+      const mvDz = hasFF ? ff.dz : (tdist > 0 ? tdz / tdist : 0);
 
       // Boss / Finalboss slam AOE
       if (e.type === 'boss' || e.type === 'finalboss') {
@@ -511,11 +617,88 @@ export class GameRoom {
           for (const p of alive) {
             const pdx = p.x - e.x, pdz = p.z - e.z;
             if (pdx*pdx + pdz*pdz < slamR * slamR) {
-              p.hp = Math.max(0, p.hp - slamD);
-              if (p.hp === 0) { p.alive = false; this.io.to(this.id).emit('playerDied', { playerId: p.id }); this._checkAllDead(); }
+              p.hp = Math.max(0, p.hp - slamD * p._perkDamageTaken);
+              if (p.hp === 0) _downPlayer(p, this);
             }
           }
         }
+      }
+
+      // Tank charge ability
+      if (e.type === 'tank') {
+        e._chargeCd = (e._chargeCd ?? TANK_CHARGE_CD) - DT;
+        if (e._chargeTime > 0) {
+          e._chargeTime -= DT;
+          _moveWithSlide(e, e._chargeDx * TANK_CHARGE_SPEED * DT, e._chargeDz * TANK_CHARGE_SPEED * DT, er, this);
+          for (const p of alive) {
+            const pdx = p.x - e.x, pdz = p.z - e.z;
+            if (pdx*pdx + pdz*pdz < 0.9 && p._dashTime <= 0) {
+              if (!e._chargeHit) e._chargeHit = new Set();
+              if (!e._chargeHit.has(p.id)) {
+                e._chargeHit.add(p.id);
+                p.hp = Math.max(0, p.hp - TANK_CHARGE_DAMAGE * p._perkDamageTaken);
+                if (p.hp === 0) _downPlayer(p, this);
+              }
+            }
+          }
+          continue;
+        }
+        if (e._chargeCd <= 0 && dist < 12) {
+          e._chargeCd  = TANK_CHARGE_CD;
+          e._chargeTime = TANK_CHARGE_DURATION;
+          e._chargeDx  = dist > 0 ? dx / dist : 0;
+          e._chargeDz  = dist > 0 ? dz / dist : 0;
+          e._chargeHit = new Set();
+          this.io.to(this.id).emit('tankCharge', { id: e.id, tx: nearest.x, tz: nearest.z });
+        }
+      }
+
+      // ── Jumper: pin player ─────────────────────────────────────────────────────
+      if (stats.isJumper) {
+        if (e._pinnedPlayer) {
+          // Stay on pinned player, deal damage
+          const pp = this.players.get(e._pinnedPlayer);
+          if (!pp || !pp.alive || pp.downed || pp.pinnedBy !== e.id) {
+            e._pinnedPlayer = null; // target freed or died
+          } else {
+            e.x = pp.x; e.z = pp.z;
+            e._atkCd = (e._atkCd ?? 0) - DT;
+            if (e._atkCd <= 0) {
+              pp.hp = Math.max(0, pp.hp - JUMPER_PIN_DAMAGE * pp._perkDamageTaken);
+              e._atkCd = stats.atkCd;
+              if (pp.hp === 0) { pp.pinnedBy = null; e._pinnedPlayer = null; _downPlayer(pp, this); }
+            }
+          }
+          continue;
+        }
+        // Not pinning: charge toward nearest
+        if (dist > stats.atkRange)
+          _moveWithSlide(e, mvDx*stats.speed*DT, mvDz*stats.speed*DT, er, this);
+        if (dist < stats.atkRange && nearest._dashTime <= 0 && !nearest.pinnedBy) {
+          e._pinnedPlayer = nearest.id;
+          nearest.pinnedBy = e.id;
+          this.io.to(this.id).emit('playerPinned', { playerId: nearest.id, enemyId: e.id });
+        }
+        continue;
+      }
+
+      // ── Smoker: fire tongue ────────────────────────────────────────────────────
+      if (stats.isSmoker) {
+        if (dist > stats.atkRange * 0.7)
+          _moveWithSlide(e, mvDx*stats.speed*DT, mvDz*stats.speed*DT, er, this);
+        e._atkCd = (e._atkCd ?? 0) - DT;
+        const alreadyPulling = this._tongues.some(t => t.owner === e.id && t.attached);
+        if (!alreadyPulling && dist <= stats.atkRange && e._atkCd <= 0) {
+          e._atkCd = stats.atkCd;
+          this._tongues.push({
+            id: this._nextTongueId++, owner: e.id,
+            x: e.x, z: e.z,
+            dx: dist > 0 ? dx/dist : 0, dz: dist > 0 ? dz/dist : 0,
+            dist: 0, hp: TONGUE_HP, attached: false, target: null,
+          });
+          this.io.to(this.id).emit('tongueShot', { id: this._tongues[this._tongues.length-1].id, ox: e.x, oz: e.z, tx: nearest.x, tz: nearest.z });
+        }
+        continue;
       }
 
       if (stats.ranged) {
@@ -534,13 +717,16 @@ export class GameRoom {
           if (e._atkCd <= 0) {
             // No damage if target has dash iframe
             if (nearest._dashTime <= 0) {
-              nearest.hp = Math.max(0, nearest.hp - stats.damage);
-              e._atkCd = stats.atkCd;
-              if (nearest.hp === 0) {
-                nearest.alive = false;
-                this.io.to(this.id).emit('playerDied', { playerId: nearest.id });
-                this._checkAllDead();
+              let dmg = stats.damage;
+              // Runner backstab: double damage if attacking from behind
+              if (e.type === 'runner' && dist > 0) {
+                const pFx = Math.sin(nearest.angle), pFz = Math.cos(nearest.angle);
+                const toEx = (e.x - nearest.x) / dist, toEz = (e.z - nearest.z) / dist;
+                if (pFx * toEx + pFz * toEz > 0.5) dmg *= 2;
               }
+              nearest.hp = Math.max(0, nearest.hp - dmg * nearest._perkDamageTaken);
+              e._atkCd = stats.atkCd;
+              if (nearest.hp === 0) _downPlayer(nearest, this);
             } else {
               e._atkCd = stats.atkCd * 0.3; // short cooldown when blocked by iframe
             }
@@ -557,11 +743,11 @@ export class GameRoom {
     for (const b of this.acidBlobs) {
       if (b.dist >= ACID_RANGE) continue;
       for (const p of this.players.values()) {
-        if (!p.alive || p.inSafeZone || p.disconnected || p._dashTime > 0) continue;
+        if (!p.alive || p.downed || p.inSafeZone || p.disconnected || p._dashTime > 0) continue;
         const dx = b.x-p.x, dz = b.z-p.z;
         if (dx*dx+dz*dz < 0.6) {
-          p.hp = Math.max(0, p.hp - ACID_DAMAGE); b.dist = ACID_RANGE;
-          if (p.hp === 0) { p.alive = false; this.io.to(this.id).emit('playerDied', { playerId: p.id }); this._checkAllDead(); }
+          p.hp = Math.max(0, p.hp - ACID_DAMAGE * p._perkDamageTaken); b.dist = ACID_RANGE;
+          if (p.hp === 0) _downPlayer(p, this);
           break;
         }
       }
@@ -590,6 +776,11 @@ export class GameRoom {
         }
       }
       for (const { e, owner } of toKill) {
+        if (e.type === 'spitter') {
+          this._acidPuddles.push({ x: e.x, z: e.z, timer: ACID_PUDDLE_DURATION });
+          this.io.to(this.id).emit('acidPuddle', { x: e.x, z: e.z, radius: ACID_PUDDLE_RADIUS, duration: ACID_PUDDLE_DURATION });
+        }
+        if (e.type === 'jumper') this._clearJumperPin(e.id);
         const n = (this._kills.get(owner) ?? 0) + 1;
         this._kills.set(owner, n);
         const killer = this.players.get(owner);
@@ -633,6 +824,76 @@ export class GameRoom {
     }
   }
 
+  // ── Tongue (smoker) ──────────────────────────────────────────────────────────
+
+  _updateTongues() {
+    for (const t of this._tongues) {
+      if (t.attached) {
+        // Pull target toward smoker
+        const smoker = this.enemies.find(e => e.id === t.owner);
+        const target = this.players.get(t.target);
+        if (!smoker || smoker.dead || !target || !target.alive || target.downed) {
+          if (target) { target.pulledBy = null; }
+          t.dead = true; continue;
+        }
+        const sdx = smoker.x - target.x, sdz = smoker.z - target.z;
+        const sd = Math.sqrt(sdx*sdx + sdz*sdz);
+        if (sd < 1.2) {
+          // Reached smoker — deal damage and release
+          target.hp = Math.max(0, target.hp - 15 * target._perkDamageTaken);
+          if (target.hp === 0) _downPlayer(target, this);
+          target.pulledBy = null; t.dead = true;
+        } else {
+          target.x += (sdx/sd) * TONGUE_PULL_SPEED * DT;
+          target.z += (sdz/sd) * TONGUE_PULL_SPEED * DT;
+          t.x = target.x; t.z = target.z;
+        }
+        // Nearby teammate rescues
+        for (const r of this.players.values()) {
+          if (r.id === target.id || !r.alive || r.downed || r.disconnected) continue;
+          const rdx = r.x - target.x, rdz = r.z - target.z;
+          if (rdx*rdx + rdz*rdz < JUMPER_RESCUE_RANGE * JUMPER_RESCUE_RANGE) {
+            target.pulledBy = null; t.dead = true;
+            this.io.to(this.id).emit('tongueRescued', { playerId: target.id, rescuedBy: r.id });
+            break;
+          }
+        }
+      } else {
+        // In flight
+        t.x += t.dx * TONGUE_SPEED * DT;
+        t.z += t.dz * TONGUE_SPEED * DT;
+        t.dist += TONGUE_SPEED * DT;
+        if (t.dist >= TONGUE_RANGE) { t.dead = true; continue; }
+        // Hit a player
+        for (const p of this.players.values()) {
+          if (!p.alive || p.downed || p.inSafeZone || p.disconnected || p.pulledBy || p.pinnedBy) continue;
+          const pdx = p.x - t.x, pdz = p.z - t.z;
+          if (pdx*pdx + pdz*pdz < 0.25) {
+            t.attached = true; t.target = p.id; p.pulledBy = t.id;
+            this.io.to(this.id).emit('tongueAttached', { tongueId: t.id, playerId: p.id });
+            break;
+          }
+        }
+      }
+    }
+    this._tongues = this._tongues.filter(t => !t.dead);
+  }
+
+  // ── Beacons ───────────────────────────────────────────────────────────────────
+
+  _updateBeacons() {
+    for (const b of this._beacons) b.timer -= DT;
+    this._beacons = this._beacons.filter(b => b.timer > 0);
+  }
+
+  // ── Jumper clear on enemy death ───────────────────────────────────────────────
+
+  _clearJumperPin(enemyId) {
+    for (const p of this.players.values()) {
+      if (p.pinnedBy === enemyId) { p.pinnedBy = null; this.io.to(this.id).emit('playerUnpinned', { playerId: p.id }); }
+    }
+  }
+
   // ── Win / Lose checks ───────────────────────────────────────────────────────
 
   _checkAllSafe() {
@@ -644,7 +905,7 @@ export class GameRoom {
   }
 
   _checkAllDead() {
-    if ([...this.players.values()].some(p => p.alive && !p.disconnected)) return;
+    if ([...this.players.values()].some(p => (p.alive || p.downed) && !p.disconnected)) return;
     const elapsed  = Math.floor((Date.now() - this._gameStartTime) / 1000);
     const players  = [...this.players.values()].map(p => ({ id: p.id, name: p.name, slot: p.slot, kills: this._kills.get(p.id) ?? 0 }));
     this.io.to(this.id).emit('gameOver', { wave: this.wave, survivalTime: elapsed, players });
@@ -656,6 +917,7 @@ export class GameRoom {
   }
 
   _checkWave() {
+    if (this._perkPhase) return;
     if (this.enemies.length > 0 || this._waveTimer > 0) {
       if (this._waveTimer > 0) {
         this._waveTimer -= DT;
@@ -673,6 +935,11 @@ export class GameRoom {
       this.players.forEach(p => { p.ready = false; });
       this._broadcastLobby();
       console.log(`[Room ${this.id}] VICTORY wave ${this.wave}`);
+      return;
+    }
+    // Perk phase every N waves
+    if (this.wave % PERK_WAVE_INTERVAL === 0) {
+      this._enterPerkPhase();
       return;
     }
     this._waveTimer = NEXT_WAVE_DELAY;
@@ -697,11 +964,69 @@ export class GameRoom {
       this.enemies.push({ id: this._nextEnemyId++, x: sp.x, z: sp.z, angle: 0, hp: ENEMY_TYPES.finalboss.hp, dead: false, type: 'finalboss', _atkCd: 0, _slamCd: FINAL_BOSS_SLAM_CD });
       this.io.to(this.id).emit('bossSpawn', { wave: n, final: true });
     }
-    // Replenish grenades each wave
-    this.players.forEach(p => { if (p.alive) p.grenadeCount = GRENADE_MAX; });
+    // Replenish grenades + beacons each wave
+    this.players.forEach(p => { if (p.alive) { p.grenadeCount = GRENADE_MAX; p.beaconCount = BEACON_MAX; } });
     this._waveStart    = Date.now();
     this._safeRoomOpen = false;
     console.log(`[Room ${this.id}] wave ${n} → ${this.enemies.length} enemies`);
+  }
+
+  // ── Revive ──────────────────────────────────────────────────────────────────
+
+  _updateRevive() {
+    const downed = [...this.players.values()].filter(p => p.downed && !p.disconnected);
+    if (downed.length === 0) return;
+    const alive = [...this.players.values()].filter(p => p.alive && !p.downed && !p.inSafeZone && !p.disconnected);
+
+    for (const d of downed) {
+      // Drain HP while down
+      d.downedHp = Math.max(0, d.downedHp - DOWNED_HP_DRAIN * DT);
+      if (d.downedHp <= 0) {
+        d.downed = false;
+        this.io.to(this.id).emit('playerDied', { playerId: d.id });
+        this._checkAllDead();
+        continue;
+      }
+
+      // Check for nearby reviver
+      let reviving = false;
+      for (const r of alive) {
+        const dx = r.x - d.x, dz = r.z - d.z;
+        if (dx*dx + dz*dz < REVIVE_RANGE * REVIVE_RANGE) {
+          d._reviveProgress = Math.min(1, d._reviveProgress + DT / REVIVE_TIME);
+          reviving = true;
+          if (d._reviveProgress >= 1) {
+            d.downed = false;
+            d.alive  = true;
+            d.hp     = Math.round(d._perkMaxHp * 0.4);
+            d._reviveProgress = 0;
+            this.io.to(this.id).emit('playerRevived', { playerId: d.id, hp: d.hp, revivedBy: r.id });
+          }
+          break;
+        }
+      }
+      if (!reviving) {
+        d._reviveProgress = Math.max(0, d._reviveProgress - DT / REVIVE_TIME);
+      }
+    }
+  }
+
+  // ── Acid puddles ─────────────────────────────────────────────────────────────
+
+  _updateAcidPuddles() {
+    if (this._acidPuddles.length === 0) return;
+    for (const a of this._acidPuddles) {
+      a.timer -= DT;
+      for (const p of this.players.values()) {
+        if (!p.alive || p.downed || p.inSafeZone || p.disconnected || p._dashTime > 0) continue;
+        const dx = p.x - a.x, dz = p.z - a.z;
+        if (dx*dx + dz*dz < ACID_PUDDLE_RADIUS * ACID_PUDDLE_RADIUS) {
+          p.hp = Math.max(0, p.hp - ACID_PUDDLE_DRAIN * DT * p._perkDamageTaken);
+          if (p.hp === 0) _downPlayer(p, this);
+        }
+      }
+    }
+    this._acidPuddles = this._acidPuddles.filter(a => a.timer > 0);
   }
 
   // ── Collision ───────────────────────────────────────────────────────────────
@@ -754,10 +1079,13 @@ export class GameRoom {
         x: p.x, z: p.z, angle: p.angle,
         hp: p.hp, ammo: p.ammo, alive: p.alive,
         reloading: p.reloading, weapon: p.weapon,
-        healthpacks: p.healthpacks, grenadeCount: p.grenadeCount,
+        healthpacks: p.healthpacks, grenadeCount: p.grenadeCount, beaconCount: p.beaconCount,
         inSafeZone: p.inSafeZone, disconnected: p.disconnected,
         dashing: p._dashTime > 0,
         appearance: p.appearance,
+        downed: p.downed, downedHp: p.downedHp,
+        reviveProgress: p._reviveProgress,
+        pinnedBy: p.pinnedBy, pulledBy: p.pulledBy,
       })),
       enemies:    this.enemies.map(e => ({ id: e.id, x: e.x, z: e.z, angle: e.angle, hp: e.hp, type: e.type })),
       bullets:    this.bullets.map(b => ({ id: b.id, x: b.x, z: b.z })),
@@ -765,11 +1093,25 @@ export class GameRoom {
       grenades:   this._grenadeProj.map(g => ({ id: g.id, x: g.x, z: g.z })),
       pickups:    this._pickups.map(p => ({ id: p.id, weapon: p.weapon, x: p.x, z: p.z, active: p.respawnTimer <= 0 })),
       healthpacks: this._healthpacks.map(h => ({ id: h.id, x: h.x, z: h.z, active: h.respawnTimer <= 0 })),
+      acidPuddles: this._acidPuddles.map(a => ({ x: a.x, z: a.z, radius: ACID_PUDDLE_RADIUS, timer: a.timer })),
+      tongues:    this._tongues.map(t => ({ id: t.id, x: t.x, z: t.z, attached: t.attached })),
+      beacons:    this._beacons.map(b => ({ x: b.x, z: b.z, timer: b.timer })),
+      perkPhase: this._perkPhase,
     });
   }
 }
 
 // ── Module-level helpers ─────────────────────────────────────────────────────
+
+function _downPlayer(p, room) {
+  if (p.downed) return; // already downed
+  p.alive  = false;
+  p.downed = true;
+  p.downedHp = DOWNED_MAX_HP;
+  p._reviveProgress = 0;
+  room.io.to(room.id).emit('playerDowned', { playerId: p.id });
+  room._checkAllDead();
+}
 
 function _randomSpawn() { return { x: (Math.random()-.5)*4, z: (Math.random()-.5)*4 }; }
 

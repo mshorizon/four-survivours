@@ -95,6 +95,11 @@ io.on('connection', (socket) => {
     if (room) room.useHealthpack(socket.id);
   });
 
+  socket.on('perkChoice', (perkId) => {
+    const room = getRoomOf(socket.id);
+    if (room) room.setPerkChoice(socket.id, perkId);
+  });
+
   socket.on('tryReconnect', ({ token, roomId }) => {
     const id   = (roomId || 'default').trim().toLowerCase() || 'default';
     const room = rooms.get(id);

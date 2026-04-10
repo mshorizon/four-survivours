@@ -8,6 +8,7 @@ export class InputHandler {
     this.usePressed     = false;
     this.dashPressed    = false;
     this.grenadePressed = false;
+    this.beaconPressed  = false;
 
     this._kd = e => {
       this.keys[e.code] = true;
@@ -15,6 +16,7 @@ export class InputHandler {
       if (e.code === 'KeyE')   this.usePressed     = true;
       if (e.code === 'Space')  { this.dashPressed    = true; e.preventDefault(); }
       if (e.code === 'KeyG')   this.grenadePressed  = true;
+      if (e.code === 'KeyF')   this.beaconPressed   = true;
     };
     this._ku = e => { this.keys[e.code] = false; };
     this._mm = e => { this.mouseX = e.clientX; this.mouseY = e.clientY; };
@@ -35,6 +37,7 @@ export class InputHandler {
   consumeUse()     { const v = this.usePressed;     this.usePressed     = false; return v; }
   consumeDash()    { const v = this.dashPressed;    this.dashPressed    = false; return v; }
   consumeGrenade() { const v = this.grenadePressed; this.grenadePressed = false; return v; }
+  consumeBeacon()  { const v = this.beaconPressed;  this.beaconPressed  = false; return v; }
 
   destroy() {
     window.removeEventListener('keydown',   this._kd);

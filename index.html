@@ -25,7 +25,10 @@
     .p-ammo { font-size: 10px; color: #ffcc44; }
     .p-weapon { font-size: 10px; color: #88aaff; text-transform: uppercase; letter-spacing: 1px; margin-top: 1px; }
     .p-dead { font-size: 10px; color: #cc2222; font-weight: bold; display: none; }
+    .p-downed { font-size: 10px; color: #ff6600; font-weight: bold; display: none; }
     .p-dc { font-size: 10px; color: #888; display: none; }
+    .p-revive-bg { background: #331a00; height: 4px; border-radius: 2px; margin-top: 2px; }
+    .p-revive-fill { background: #ffaa00; height: 100%; border-radius: 2px; width: 0%; transition: width 0.15s; }
 
     /* ── Top center ── */
     #top-center { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; }
@@ -172,6 +175,17 @@
     #vic-ready-btn:hover { background: #337744; }
     #vic-ready-btn.is-ready { background: #886622; border-color: #ffaa22; color: #fff; }
     #vic-wait-status { font-size: 12px; color: #888; letter-spacing: 1px; }
+
+    /* ── Perk overlay ── */
+    #perk-overlay { position: fixed; inset: 0; z-index: 150; background: rgba(0,0,20,0.88); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 20px; color: #fff; pointer-events: all; }
+    #perk-overlay h2 { font-size: 24px; letter-spacing: 4px; text-transform: uppercase; color: #aaffdd; }
+    #perk-timer-row { font-size: 13px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+    #perk-timer { color: #ffdd44; font-weight: bold; }
+    #perk-cards { display: flex; gap: 16px; }
+    .perk-card { background: #0d1a2a; border: 2px solid #2255aa; border-radius: 6px; padding: 20px 24px; width: 160px; cursor: pointer; transition: border-color 0.15s, transform 0.15s, background 0.15s; font-family: inherit; color: #fff; text-align: center; pointer-events: all; }
+    .perk-card:hover { border-color: #44aaff; background: #112233; transform: translateY(-3px); }
+    .perk-name { font-size: 14px; font-weight: bold; color: #44ddff; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+    .perk-desc { font-size: 11px; color: #99bbcc; line-height: 1.5; }
   </style>
 </head>
 <body>
@@ -241,6 +255,13 @@
     <div id="wait-status">Waiting for all players to ready up...</div>
   </div>
 
+  <!-- Perk overlay -->
+  <div id="perk-overlay">
+    <h2>Choose a Perk</h2>
+    <div id="perk-timer-row">Auto-pick in <span id="perk-timer">25</span>s</div>
+    <div id="perk-cards"></div>
+  </div>
+
   <!-- Settings overlay -->
   <div id="settings-overlay">
     <div id="settings-panel">
@@ -256,10 +277,10 @@
 
   <div id="hud">
     <div id="player-panel">
-      <div class="p-card" id="p-card-0"><div class="p-row"><div class="p-avatar" id="p-avatar-0"></div><div class="p-info"><div class="p-name" id="p-name-0">P1</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-0" style="width:100%"></div></div><div class="p-ammo" id="p-ammo-0">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-0">PISTOL</div><div class="p-dead" id="p-dead-0">DEAD</div><div class="p-dc" id="p-dc-0">DISCONNECTED</div></div>
-      <div class="p-card" id="p-card-1"><div class="p-row"><div class="p-avatar" id="p-avatar-1"></div><div class="p-info"><div class="p-name" id="p-name-1">P2</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-1" style="width:100%"></div></div><div class="p-ammo" id="p-ammo-1">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-1">PISTOL</div><div class="p-dead" id="p-dead-1">DEAD</div><div class="p-dc" id="p-dc-1">DISCONNECTED</div></div>
-      <div class="p-card" id="p-card-2"><div class="p-row"><div class="p-avatar" id="p-avatar-2"></div><div class="p-info"><div class="p-name" id="p-name-2">P3</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-2" style="width:100%"></div></div><div class="p-ammo" id="p-ammo-2">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-2">PISTOL</div><div class="p-dead" id="p-dead-2">DEAD</div><div class="p-dc" id="p-dc-2">DISCONNECTED</div></div>
-      <div class="p-card" id="p-card-3"><div class="p-row"><div class="p-avatar" id="p-avatar-3"></div><div class="p-info"><div class="p-name" id="p-name-3">P4</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-3" style="width:100%"></div></div><div class="p-ammo" id="p-ammo-3">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-3">PISTOL</div><div class="p-dead" id="p-dead-3">DEAD</div><div class="p-dc" id="p-dc-3">DISCONNECTED</div></div>
+      <div class="p-card" id="p-card-0"><div class="p-row"><div class="p-avatar" id="p-avatar-0"></div><div class="p-info"><div class="p-name" id="p-name-0">P1</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-0" style="width:100%"></div></div><div class="p-revive-bg"><div class="p-revive-fill" id="p-revive-bar-0"></div></div><div class="p-ammo" id="p-ammo-0">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-0">PISTOL</div><div class="p-dead" id="p-dead-0">DEAD</div><div class="p-downed" id="p-downed-0">DOWN — REVIVE</div><div class="p-dc" id="p-dc-0">DISCONNECTED</div></div>
+      <div class="p-card" id="p-card-1"><div class="p-row"><div class="p-avatar" id="p-avatar-1"></div><div class="p-info"><div class="p-name" id="p-name-1">P2</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-1" style="width:100%"></div></div><div class="p-revive-bg"><div class="p-revive-fill" id="p-revive-bar-1"></div></div><div class="p-ammo" id="p-ammo-1">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-1">PISTOL</div><div class="p-dead" id="p-dead-1">DEAD</div><div class="p-downed" id="p-downed-1">DOWN — REVIVE</div><div class="p-dc" id="p-dc-1">DISCONNECTED</div></div>
+      <div class="p-card" id="p-card-2"><div class="p-row"><div class="p-avatar" id="p-avatar-2"></div><div class="p-info"><div class="p-name" id="p-name-2">P3</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-2" style="width:100%"></div></div><div class="p-revive-bg"><div class="p-revive-fill" id="p-revive-bar-2"></div></div><div class="p-ammo" id="p-ammo-2">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-2">PISTOL</div><div class="p-dead" id="p-dead-2">DEAD</div><div class="p-downed" id="p-downed-2">DOWN — REVIVE</div><div class="p-dc" id="p-dc-2">DISCONNECTED</div></div>
+      <div class="p-card" id="p-card-3"><div class="p-row"><div class="p-avatar" id="p-avatar-3"></div><div class="p-info"><div class="p-name" id="p-name-3">P4</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-3" style="width:100%"></div></div><div class="p-revive-bg"><div class="p-revive-fill" id="p-revive-bar-3"></div></div><div class="p-ammo" id="p-ammo-3">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-3">PISTOL</div><div class="p-dead" id="p-dead-3">DEAD</div><div class="p-downed" id="p-downed-3">DOWN — REVIVE</div><div class="p-dc" id="p-dc-3">DISCONNECTED</div></div>
     </div>
 
     <div id="top-center"><div id="game-title">☠ Four Survivors</div></div>
@@ -284,7 +305,12 @@
         <div id="grenade-count-display">💣 ×<span id="grenade-count">2</span></div>
         <span id="grenade-key">[G]</span>
       </div>
+      <div id="beacon-bar">
+        <div id="beacon-count-display">📡 ×<span id="beacon-count">0</span></div>
+        <span id="beacon-key">[F]</span>
+      </div>
     </div>
+    <div id="pinned-msg" style="display:none;position:fixed;top:35%;left:50%;transform:translateX(-50%);font-size:20px;font-weight:bold;color:#ff4400;text-shadow:2px 2px 0 #000;text-transform:uppercase;letter-spacing:2px;pointer-events:none;">PINNED / GRABBED</div>
 
     <div id="safe-room-status">Safe room locked — <span id="safe-countdown">10</span>s</div>
 
