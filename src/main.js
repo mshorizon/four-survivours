@@ -68,9 +68,11 @@ function loadMap(mapId) {
   scene.add(mapGroup);
   const result = buildMap(mapGroup, mapId);
   fireLights = result.fireLights ?? [];
-  // Fog of war: black background + tight black fog so flashlight edges blend into darkness
+  // Fog of war: black background.
+  // Camera sits ~22 units from player (offset 0,18,14), so fog must start beyond that.
+  // near=24 → objects near player visible; far=40 → distant things fade to black.
   scene.background = new THREE.Color(0x000000);
-  scene.fog = new THREE.Fog(0x000000, 9, 22);
+  scene.fog = new THREE.Fog(0x000000, 24, 40);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
