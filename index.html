@@ -6,27 +6,16 @@
   <title>Four Survivors</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { overflow: hidden; background: #000000; font-family: 'Courier New', monospace; cursor: crosshair; }
+    body { overflow: hidden; background: #000; font-family: 'Courier New', monospace; cursor: crosshair; }
     #game-canvas { position: fixed; top: 0; left: 0; display: block; }
+    #hud { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; color: #fff; user-select: none; }
 
-    #hud {
-      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-      pointer-events: none; color: #fff; user-select: none;
-    }
-
-    /* ── Player panel (top-left) ── */
-    #player-panel {
-      position: absolute; top: 12px; left: 12px;
-      display: flex; flex-direction: column; gap: 6px;
-    }
-    .p-card {
-      background: rgba(0,0,0,0.65);
-      border: 2px solid #444; border-radius: 4px;
-      padding: 6px 10px; min-width: 170px;
-      display: none;
-    }
+    /* ── Player panel ── */
+    #player-panel { position: absolute; top: 12px; left: 12px; display: flex; flex-direction: column; gap: 6px; }
+    .p-card { background: rgba(0,0,0,0.65); border: 2px solid #444; border-radius: 4px; padding: 6px 10px; min-width: 170px; display: none; }
     .p-card.active { display: block; }
     .p-card.local-player { border-color: #88ccff; }
+    .p-card.is-dashing { border-color: #44ffff; }
     .p-row { display: flex; align-items: center; gap: 8px; }
     .p-avatar { width: 24px; height: 24px; border-radius: 3px; border: 2px solid #666; flex-shrink: 0; }
     .p-info { flex: 1; }
@@ -34,166 +23,159 @@
     .p-hp-bg { background: #330000; height: 6px; border-radius: 2px; margin: 3px 0 2px; }
     .p-hp-fill { background: linear-gradient(90deg, #cc2222, #ff5555); height: 100%; border-radius: 2px; transition: width 0.12s; }
     .p-ammo { font-size: 10px; color: #ffcc44; }
+    .p-weapon { font-size: 10px; color: #88aaff; text-transform: uppercase; letter-spacing: 1px; margin-top: 1px; }
     .p-dead { font-size: 10px; color: #cc2222; font-weight: bold; display: none; }
+    .p-dc { font-size: 10px; color: #888; display: none; }
 
-    /* ── Top center title ── */
-    #top-center {
-      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
-      text-align: center; pointer-events: none;
-    }
-    #game-title {
-      font-size: 18px; font-weight: bold; color: #fff;
-      text-shadow: 0 0 8px #000, 2px 2px 0 #000;
-      text-transform: uppercase; letter-spacing: 2px;
-    }
+    /* ── Top center ── */
+    #top-center { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; }
+    #game-title { font-size: 18px; font-weight: bold; color: #fff; text-shadow: 0 0 8px #000, 2px 2px 0 #000; text-transform: uppercase; letter-spacing: 2px; }
 
     /* ── Top right ── */
-    #top-right {
-      position: absolute; top: 12px; right: 14px;
-      background: rgba(0,0,0,0.65);
-      border: 2px solid #444; border-radius: 4px;
-      padding: 8px 14px; text-align: right;
-    }
+    #top-right { position: absolute; top: 12px; right: 14px; background: rgba(0,0,0,0.65); border: 2px solid #444; border-radius: 4px; padding: 8px 14px; text-align: right; }
     #wave-label { font-size: 11px; color: #aaa; text-transform: uppercase; }
     #wave-num { font-size: 26px; font-weight: bold; color: #fff; line-height: 1; }
     #objective { font-size: 11px; color: #88ee99; text-transform: uppercase; margin-top: 4px; }
-    #kills-display { font-size: 12px; color: #ffaa44; margin-top: 4px; }
+    #ping-display { font-size: 10px; color: #666; margin-top: 3px; }
 
-    /* ── Message overlay ── */
-    #msg {
-      position: absolute; top: 44%; left: 50%; transform: translate(-50%, -50%);
-      font-size: 30px; font-weight: bold; color: #ffdd44;
-      text-shadow: 3px 3px 0 #000, 0 0 20px rgba(0,0,0,0.8);
-      text-transform: uppercase; letter-spacing: 3px;
-      text-align: center; white-space: nowrap;
-    }
+    /* ── Message ── */
+    #msg { position: absolute; top: 44%; left: 50%; transform: translate(-50%, -50%); font-size: 30px; font-weight: bold; color: #ffdd44; text-shadow: 3px 3px 0 #000, 0 0 20px rgba(0,0,0,0.8); text-transform: uppercase; letter-spacing: 3px; text-align: center; white-space: nowrap; }
 
     /* ── Reload bar ── */
-    #reload-bar {
-      position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%);
-      width: 160px; display: none;
-    }
+    #reload-bar { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%); width: 160px; display: none; }
     #reload-label { font-size: 12px; color: #ffcc44; text-align: center; margin-bottom: 4px; }
     #reload-bg { background: #333; height: 6px; border-radius: 3px; }
-    #reload-fill { background: #ffcc44; height: 100%; border-radius: 3px; width: 0%; transition: none; }
+    #reload-fill { background: #ffcc44; height: 100%; border-radius: 3px; width: 0%; }
 
-    /* ── Weapon display ── */
-    .p-weapon {
-      font-size: 10px; color: #88aaff; text-transform: uppercase;
-      letter-spacing: 1px; margin-top: 1px;
-    }
+    /* ── Safe room ── */
+    #safe-room-status { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; text-align: center; color: #ff4444; text-shadow: 0 0 8px rgba(255,60,60,0.5); display: none; }
+    #safe-room-status.open { color: #44ff88; text-shadow: 0 0 8px rgba(60,255,120,0.5); }
+
+    /* ── Action bar (healthpack + grenades) ── */
+    #action-bar { position: absolute; bottom: 95px; left: 50%; transform: translateX(-50%); display: none; align-items: center; gap: 18px; }
+    #healthpack-bar { display: flex; align-items: center; gap: 8px; }
+    #use-healthpack-btn { background: #aa2222; color: #fff; border: 2px solid #cc4444; padding: 6px 12px; font-family: inherit; font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; border-radius: 3px; pointer-events: all; transition: background 0.15s; }
+    #use-healthpack-btn:hover:not(:disabled) { background: #cc3333; }
+    #use-healthpack-btn:disabled { opacity: 0.4; cursor: default; }
+    #healthpack-count-display { font-size: 13px; color: #ff8888; font-weight: bold; }
+    #grenade-bar { display: flex; align-items: center; gap: 6px; }
+    #grenade-count-display { font-size: 13px; color: #ffaa44; font-weight: bold; }
+    #grenade-key { font-size: 10px; color: #888; letter-spacing: 1px; }
+
+    /* ── Spectate info ── */
+    #spectate-info { position: absolute; bottom: 170px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #888; letter-spacing: 2px; text-transform: uppercase; display: none; text-align: center; }
+
+    /* ── Kill feed ── */
+    #kill-feed { position: absolute; left: 12px; bottom: 42px; display: flex; flex-direction: column-reverse; gap: 3px; max-width: 260px; }
+    .kf-row { font-size: 11px; color: #ffcc88; letter-spacing: 1px; text-shadow: 1px 1px 0 #000; transition: opacity 0.4s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     /* ── Minimap ── */
-    #minimap {
-      position: absolute; bottom: 14px; right: 14px;
-      width: 130px; height: 130px;
-      border: 2px solid #444; border-radius: 4px;
-      background: rgba(0,0,0,0.7);
-    }
+    #minimap { position: absolute; bottom: 14px; right: 14px; width: 130px; height: 130px; border: 2px solid #444; border-radius: 4px; background: rgba(0,0,0,0.7); }
 
-    /* ── Controls hint ── */
-    #controls {
-      position: absolute; bottom: 14px; left: 12px;
-      font-size: 10px; color: #666; line-height: 1.6;
-    }
+    /* ── Settings button ── */
+    #settings-btn { position: absolute; bottom: 14px; right: 154px; background: rgba(0,0,0,0.65); border: 2px solid #444; border-radius: 4px; padding: 6px 10px; font-family: inherit; font-size: 12px; color: #888; cursor: pointer; pointer-events: all; transition: color 0.15s; }
+    #settings-btn:hover { color: #ccc; border-color: #666; }
 
-    /* ── Lobby overlay ── */
-    #lobby {
-      position: fixed; inset: 0; z-index: 100;
-      background: rgba(10,10,20,0.92);
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      gap: 18px; color: #fff; font-family: 'Courier New', monospace;
-    }
+    /* ── Settings overlay ── */
+    #settings-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,10,0.85); display: none; align-items: center; justify-content: center; }
+    #settings-panel { background: #111122; border: 2px solid #444; border-radius: 6px; padding: 24px 32px; min-width: 300px; display: flex; flex-direction: column; gap: 16px; color: #fff; font-family: 'Courier New', monospace; }
+    #settings-panel h3 { font-size: 16px; letter-spacing: 3px; text-transform: uppercase; color: #ffdd44; }
+    .setting-row { display: flex; align-items: center; gap: 12px; }
+    .setting-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; width: 80px; }
+    #volume-slider { flex: 1; accent-color: #ffdd44; cursor: pointer; }
+    #volume-value { font-size: 12px; color: #fff; width: 36px; text-align: right; }
+    #close-settings { background: #333; color: #fff; border: 1px solid #555; padding: 8px 20px; font-family: inherit; font-size: 13px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; align-self: center; transition: background 0.15s; pointer-events: all; }
+    #close-settings:hover { background: #555; }
+
+    /* ── Controls ── */
+    #controls { position: absolute; bottom: 14px; left: 12px; font-size: 10px; color: #555; line-height: 1.8; }
+
+    /* ── Lobby ── */
+    #lobby { position: fixed; inset: 0; z-index: 100; background: rgba(10,10,20,0.92); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #fff; }
     #lobby h1 { font-size: 42px; letter-spacing: 6px; text-transform: uppercase; color: #ffdd44; text-shadow: 0 0 20px rgba(255,200,0,0.4); }
     #lobby p  { font-size: 13px; color: #888; text-transform: uppercase; letter-spacing: 2px; }
     #lobby-fields { display: flex; flex-direction: column; gap: 10px; width: 280px; }
-    #lobby-fields input {
-      background: #1a1a2a; border: 1px solid #444; color: #fff;
-      padding: 10px 14px; font-family: inherit; font-size: 14px;
-      border-radius: 3px; outline: none; text-transform: uppercase; letter-spacing: 1px;
-    }
+    #lobby-fields input { background: #1a1a2a; border: 1px solid #444; color: #fff; padding: 10px 14px; font-family: inherit; font-size: 14px; border-radius: 3px; outline: none; text-transform: uppercase; letter-spacing: 1px; }
     #lobby-fields input:focus { border-color: #ffdd44; }
-    #join-btn {
-      background: #ffdd44; color: #111; border: none;
-      padding: 12px; font-family: inherit; font-size: 16px; font-weight: bold;
-      letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
-      border-radius: 3px; transition: background 0.15s;
-    }
+    #join-btn { background: #ffdd44; color: #111; border: none; padding: 12px; font-family: inherit; font-size: 16px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; transition: background 0.15s; }
     #join-btn:hover { background: #ffe866; }
     #lobby-status { font-size: 12px; color: #55aa55; letter-spacing: 1px; min-height: 16px; }
 
-    /* ── Room waiting screen ── */
-    #room-wait {
-      position: fixed; inset: 0; z-index: 100;
-      background: rgba(10,10,20,0.92);
-      display: none; flex-direction: column;
-      align-items: center; justify-content: center;
-      gap: 18px; color: #fff; font-family: 'Courier New', monospace;
-    }
+    /* ── Room list ── */
+    #room-list-section { width: 280px; }
+    #room-list-label { font-size: 10px; color: #666; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+    #refresh-rooms { background: none; border: 1px solid #444; color: #888; padding: 2px 8px; font-family: inherit; font-size: 10px; cursor: pointer; border-radius: 2px; transition: color 0.15s; }
+    #refresh-rooms:hover { color: #ccc; border-color: #666; }
+    #room-list { display: flex; flex-direction: column; gap: 4px; max-height: 120px; overflow-y: auto; }
+    .room-item { display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.04); border: 1px solid #333; border-radius: 3px; padding: 6px 10px; }
+    .room-id { font-size: 12px; color: #ffdd44; text-transform: uppercase; flex: 1; }
+    .room-info { font-size: 10px; color: #888; white-space: nowrap; }
+    .room-join-btn { background: #2a2a4a; border: 1px solid #444; color: #88aaff; padding: 3px 10px; font-family: inherit; font-size: 10px; cursor: pointer; border-radius: 2px; transition: background 0.15s; }
+    .room-join-btn:hover { background: #3a3a6a; }
+    .room-empty { font-size: 11px; color: #444; text-align: center; padding: 8px; }
+
+    /* ── Appearance ── */
+    #appearance-section { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 280px; background: rgba(255,255,255,0.04); border: 1px solid #333; border-radius: 4px; padding: 10px 14px; }
+    .ap-label { font-size: 10px; color: #888; letter-spacing: 2px; text-transform: uppercase; align-self: flex-start; }
+    .swatch-row, .hat-row { display: flex; gap: 6px; flex-wrap: wrap; }
+    .swatch { width: 28px; height: 28px; border-radius: 3px; cursor: pointer; border: 2px solid #333; transition: border-color 0.12s, transform 0.12s; }
+    .swatch:hover { transform: scale(1.12); }
+    .swatch.selected { border-color: #ffdd44; }
+    .hat-btn { padding: 4px 10px; font-family: inherit; font-size: 10px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; border-radius: 3px; border: 2px solid #333; background: #1a1a2a; color: #888; transition: all 0.12s; pointer-events: all; }
+    .hat-btn:hover { border-color: #888; color: #ccc; }
+    .hat-btn.selected { border-color: #ffdd44; color: #ffdd44; background: #2a2a10; }
+
+    /* ── Room waiting ── */
+    #room-wait { position: fixed; inset: 0; z-index: 100; background: rgba(10,10,20,0.92); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 18px; color: #fff; }
     #room-wait h2 { font-size: 28px; letter-spacing: 4px; text-transform: uppercase; color: #ffdd44; }
-    #room-wait .room-code { font-size: 13px; color: #888; letter-spacing: 2px; }
-    #player-list {
-      display: flex; flex-direction: column; gap: 8px; width: 300px;
-    }
-    .player-row {
-      display: flex; align-items: center; gap: 12px;
-      background: rgba(255,255,255,0.05); border: 1px solid #333;
-      border-radius: 4px; padding: 8px 12px;
-    }
-    .player-row .pw-avatar {
-      width: 24px; height: 24px; border-radius: 3px; flex-shrink: 0;
-    }
-    .player-row .pw-name { flex: 1; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
-    .player-row .pw-ready { font-size: 11px; font-weight: bold; letter-spacing: 1px; }
-    .player-row .pw-ready.ready { color: #44dd66; }
-    .player-row .pw-ready.waiting { color: #888; }
-    #ready-btn {
-      background: #33aa44; color: #fff; border: none;
-      padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold;
-      letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
-      border-radius: 3px; transition: background 0.15s; width: 300px;
-      pointer-events: all;
-    }
+    #player-list { display: flex; flex-direction: column; gap: 8px; width: 300px; }
+    .player-row { display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.05); border: 1px solid #333; border-radius: 4px; padding: 8px 12px; }
+    .pw-avatar { width: 24px; height: 24px; border-radius: 3px; flex-shrink: 0; }
+    .pw-name { flex: 1; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
+    .pw-ready { font-size: 11px; font-weight: bold; letter-spacing: 1px; }
+    .pw-ready.ready { color: #44dd66; }
+    .pw-ready.waiting { color: #888; }
+    #map-vote-section { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 300px; }
+    #map-vote-label { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+    #map-vote-buttons { display: flex; gap: 8px; width: 100%; }
+    .map-vote-btn { flex: 1; padding: 8px 4px; font-family: inherit; font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; border-radius: 3px; border: 2px solid #444; background: #1a1a2a; color: #888; transition: all 0.15s; pointer-events: all; }
+    .map-vote-btn:hover { border-color: #888; color: #ccc; }
+    .map-vote-btn.voted { border-color: #ffdd44; color: #ffdd44; background: #2a2a10; }
+    .map-vote-count { font-size: 16px; display: block; margin-top: 2px; }
+    #ready-btn { background: #33aa44; color: #fff; border: none; padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; transition: background 0.15s; width: 300px; pointer-events: all; }
     #ready-btn:hover { background: #44cc55; }
     #ready-btn.is-ready { background: #886622; }
-    #ready-btn.is-ready:hover { background: #aa7722; }
     #wait-status { font-size: 12px; color: #888; letter-spacing: 1px; }
 
-    /* ── Game Over overlay ── */
-    #game-over {
-      position: fixed; inset: 0; z-index: 100;
-      background: rgba(10,10,20,0.93);
-      display: none; flex-direction: column;
-      align-items: center; justify-content: center;
-      gap: 16px; color: #fff; font-family: 'Courier New', monospace;
-    }
+    /* ── Game Over ── */
+    #game-over { position: fixed; inset: 0; z-index: 100; background: rgba(10,10,20,0.93); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: #fff; }
     #game-over h2 { font-size: 48px; letter-spacing: 6px; text-transform: uppercase; color: #ff4444; text-shadow: 0 0 30px rgba(255,60,60,0.5); }
     #go-stats { font-size: 14px; color: #aaa; letter-spacing: 2px; text-align: center; line-height: 1.8; }
     #go-stats span { color: #ffdd44; font-weight: bold; }
     #go-player-list { display: flex; flex-direction: column; gap: 6px; width: 320px; }
-    .go-row {
-      display: flex; align-items: center; gap: 10px;
-      background: rgba(255,255,255,0.05); border: 1px solid #333;
-      border-radius: 4px; padding: 7px 12px;
-    }
-    .go-row .go-avatar { width: 20px; height: 20px; border-radius: 3px; flex-shrink: 0; }
-    .go-row .go-name { flex: 1; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
-    .go-row .go-kills { font-size: 13px; color: #ffaa44; font-weight: bold; }
-    #go-ready-btn {
-      background: #33aa44; color: #fff; border: none;
-      padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold;
-      letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
-      border-radius: 3px; transition: background 0.15s; width: 320px;
-      pointer-events: all; margin-top: 8px;
-    }
+    .go-row { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05); border: 1px solid #333; border-radius: 4px; padding: 7px 12px; }
+    .go-avatar { width: 20px; height: 20px; border-radius: 3px; flex-shrink: 0; }
+    .go-name { flex: 1; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+    .go-kills { font-size: 13px; color: #ffaa44; font-weight: bold; }
+    #go-ready-btn { background: #33aa44; color: #fff; border: none; padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; transition: background 0.15s; width: 320px; pointer-events: all; margin-top: 8px; }
     #go-ready-btn:hover { background: #44cc55; }
     #go-ready-btn.is-ready { background: #886622; }
-    #go-ready-btn.is-ready:hover { background: #aa7722; }
     #go-wait-status { font-size: 12px; color: #888; letter-spacing: 1px; }
+
+    /* ── Victory ── */
+    #victory { position: fixed; inset: 0; z-index: 100; background: rgba(0,20,0,0.93); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: #fff; }
+    #victory h2 { font-size: 48px; letter-spacing: 6px; text-transform: uppercase; color: #44ff88; text-shadow: 0 0 40px rgba(60,255,120,0.6); }
+    #victory .go-stats { font-size: 14px; color: #aaa; letter-spacing: 2px; text-align: center; line-height: 1.8; }
+    #victory .go-stats span { color: #44ffdd; font-weight: bold; }
+    #vic-player-list { display: flex; flex-direction: column; gap: 6px; width: 320px; }
+    #vic-ready-btn { background: #226633; color: #88ff99; border: 2px solid #44ff88; padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; transition: background 0.15s; width: 320px; pointer-events: all; margin-top: 8px; }
+    #vic-ready-btn:hover { background: #337744; }
+    #vic-ready-btn.is-ready { background: #886622; border-color: #ffaa22; color: #fff; }
+    #vic-wait-status { font-size: 12px; color: #888; letter-spacing: 1px; }
   </style>
 </head>
 <body>
+
   <!-- Lobby -->
   <div id="lobby">
     <h1>Four Survivors</h1>
@@ -204,104 +186,118 @@
       <button id="join-btn">Join Game</button>
     </div>
     <div id="lobby-status"></div>
-    <p style="font-size:11px;color:#555">WASD Move &nbsp;|&nbsp; Mouse Aim &nbsp;|&nbsp; LMB Shoot &nbsp;|&nbsp; R Reload</p>
+
+    <!-- Active rooms -->
+    <div id="room-list-section">
+      <div id="room-list-label">Active rooms <button id="refresh-rooms">Refresh</button></div>
+      <div id="room-list"><div class="room-empty">Loading...</div></div>
+    </div>
+
+    <!-- Character appearance -->
+    <div id="appearance-section">
+      <div class="ap-label">Skin tone</div>
+      <div class="swatch-row" id="skin-swatches"></div>
+      <div class="ap-label">Outfit color</div>
+      <div class="swatch-row" id="outfit-swatches"></div>
+      <div class="ap-label">Hat</div>
+      <div class="hat-row" id="hat-buttons"></div>
+    </div>
+
+    <p style="font-size:11px;color:#555">WASD Move · Mouse Aim · LMB Shoot · SPACE Dash · G Grenade · E Healthpack · R Reload</p>
   </div>
 
-  <!-- Game Over screen -->
+  <!-- Game Over -->
   <div id="game-over">
     <h2>Game Over</h2>
-    <div id="go-stats">
-      Wave reached: <span id="go-wave">—</span> &nbsp;|&nbsp; Survived: <span id="go-time">—</span>
-    </div>
+    <div id="go-stats">Wave: <span id="go-wave">—</span> &nbsp;|&nbsp; Survived: <span id="go-time">—</span></div>
     <div id="go-player-list"></div>
     <button id="go-ready-btn">Play Again</button>
     <div id="go-wait-status">Waiting for all players...</div>
   </div>
 
-  <!-- Room waiting screen -->
+  <!-- Victory -->
+  <div id="victory">
+    <h2>Victory!</h2>
+    <div class="go-stats">Wave: <span id="vic-wave">—</span> &nbsp;|&nbsp; Time: <span id="vic-time">—</span></div>
+    <div id="vic-player-list"></div>
+    <button id="vic-ready-btn">Play Again</button>
+    <div id="vic-wait-status">Waiting for all players...</div>
+  </div>
+
+  <!-- Room waiting -->
   <div id="room-wait">
     <h2>Waiting for Players</h2>
     <div class="room-code" id="wait-room-code">Room: —</div>
     <div id="player-list"></div>
+    <div id="map-vote-section">
+      <div id="map-vote-label">Vote for map</div>
+      <div id="map-vote-buttons">
+        <button class="map-vote-btn" data-map="city">City<span class="map-vote-count" id="vote-count-city">0</span></button>
+        <button class="map-vote-btn" data-map="forest">Forest<span class="map-vote-count" id="vote-count-forest">0</span></button>
+        <button class="map-vote-btn" data-map="industrial">Industrial<span class="map-vote-count" id="vote-count-industrial">0</span></button>
+      </div>
+    </div>
     <button id="ready-btn">Ready</button>
     <div id="wait-status">Waiting for all players to ready up...</div>
   </div>
 
+  <!-- Settings overlay -->
+  <div id="settings-overlay">
+    <div id="settings-panel">
+      <h3>Settings</h3>
+      <div class="setting-row">
+        <span class="setting-label">Volume</span>
+        <input type="range" id="volume-slider" min="0" max="100" value="55" />
+        <span id="volume-value">55%</span>
+      </div>
+      <button id="close-settings">Close</button>
+    </div>
+  </div>
+
   <div id="hud">
     <div id="player-panel">
-      <!-- 4 player cards, slots 0-3, shown dynamically -->
-      <div class="p-card" id="p-card-0">
-        <div class="p-row">
-          <div class="p-avatar" id="p-avatar-0"></div>
-          <div class="p-info">
-            <div class="p-name" id="p-name-0">P1</div>
-            <div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-0" style="width:100%"></div></div>
-            <div class="p-ammo" id="p-ammo-0">AMMO: 15/15</div>
-          </div>
-        </div>
-        <div class="p-weapon" id="p-weapon-0">PISTOL</div>
-        <div class="p-dead" id="p-dead-0">DEAD</div>
-      </div>
-      <div class="p-card" id="p-card-1">
-        <div class="p-row">
-          <div class="p-avatar" id="p-avatar-1"></div>
-          <div class="p-info">
-            <div class="p-name" id="p-name-1">P2</div>
-            <div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-1" style="width:100%"></div></div>
-            <div class="p-ammo" id="p-ammo-1">AMMO: 15/15</div>
-          </div>
-        </div>
-        <div class="p-weapon" id="p-weapon-1">PISTOL</div>
-        <div class="p-dead" id="p-dead-1">DEAD</div>
-      </div>
-      <div class="p-card" id="p-card-2">
-        <div class="p-row">
-          <div class="p-avatar" id="p-avatar-2"></div>
-          <div class="p-info">
-            <div class="p-name" id="p-name-2">P3</div>
-            <div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-2" style="width:100%"></div></div>
-            <div class="p-ammo" id="p-ammo-2">AMMO: 15/15</div>
-          </div>
-        </div>
-        <div class="p-weapon" id="p-weapon-2">PISTOL</div>
-        <div class="p-dead" id="p-dead-2">DEAD</div>
-      </div>
-      <div class="p-card" id="p-card-3">
-        <div class="p-row">
-          <div class="p-avatar" id="p-avatar-3"></div>
-          <div class="p-info">
-            <div class="p-name" id="p-name-3">P4</div>
-            <div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-3" style="width:100%"></div></div>
-            <div class="p-ammo" id="p-ammo-3">AMMO: 15/15</div>
-          </div>
-        </div>
-        <div class="p-weapon" id="p-weapon-3">PISTOL</div>
-        <div class="p-dead" id="p-dead-3">DEAD</div>
-      </div>
+      <div class="p-card" id="p-card-0"><div class="p-row"><div class="p-avatar" id="p-avatar-0"></div><div class="p-info"><div class="p-name" id="p-name-0">P1</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-0" style="width:100%"></div></div><div class="p-ammo" id="p-ammo-0">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-0">PISTOL</div><div class="p-dead" id="p-dead-0">DEAD</div><div class="p-dc" id="p-dc-0">DISCONNECTED</div></div>
+      <div class="p-card" id="p-card-1"><div class="p-row"><div class="p-avatar" id="p-avatar-1"></div><div class="p-info"><div class="p-name" id="p-name-1">P2</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-1" style="width:100%"></div></div><div class="p-ammo" id="p-ammo-1">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-1">PISTOL</div><div class="p-dead" id="p-dead-1">DEAD</div><div class="p-dc" id="p-dc-1">DISCONNECTED</div></div>
+      <div class="p-card" id="p-card-2"><div class="p-row"><div class="p-avatar" id="p-avatar-2"></div><div class="p-info"><div class="p-name" id="p-name-2">P3</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-2" style="width:100%"></div></div><div class="p-ammo" id="p-ammo-2">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-2">PISTOL</div><div class="p-dead" id="p-dead-2">DEAD</div><div class="p-dc" id="p-dc-2">DISCONNECTED</div></div>
+      <div class="p-card" id="p-card-3"><div class="p-row"><div class="p-avatar" id="p-avatar-3"></div><div class="p-info"><div class="p-name" id="p-name-3">P4</div><div class="p-hp-bg"><div class="p-hp-fill" id="p-hp-3" style="width:100%"></div></div><div class="p-ammo" id="p-ammo-3">AMMO: 15/15</div></div></div><div class="p-weapon" id="p-weapon-3">PISTOL</div><div class="p-dead" id="p-dead-3">DEAD</div><div class="p-dc" id="p-dc-3">DISCONNECTED</div></div>
     </div>
 
-    <div id="top-center">
-      <div id="game-title">☠ Zombie Horde: Survival</div>
-    </div>
+    <div id="top-center"><div id="game-title">☠ Four Survivors</div></div>
 
     <div id="top-right">
       <div id="wave-label">Wave</div>
       <div id="wave-num"><span id="wave">1</span></div>
-      <div id="objective">Objective: Reach Safe Room</div>
-      <div id="kills-display">Kills: <span id="kills">0</span></div>
+      <div id="objective">Reach the Safe Room</div>
+      <div id="ping-display">Ping: —</div>
     </div>
 
     <div id="msg"></div>
 
-    <div id="reload-bar">
-      <div id="reload-label">RELOADING...</div>
-      <div id="reload-bg"><div id="reload-fill"></div></div>
+    <div id="reload-bar"><div id="reload-label">RELOADING...</div><div id="reload-bg"><div id="reload-fill"></div></div></div>
+
+    <div id="action-bar">
+      <div id="healthpack-bar">
+        <div id="healthpack-count-display">💊 ×<span id="hp-pack-count">0</span></div>
+        <button id="use-healthpack-btn" disabled>[E] Use</button>
+      </div>
+      <div id="grenade-bar">
+        <div id="grenade-count-display">💣 ×<span id="grenade-count">2</span></div>
+        <span id="grenade-key">[G]</span>
+      </div>
     </div>
+
+    <div id="safe-room-status">Safe room locked — <span id="safe-countdown">10</span>s</div>
+
+    <div id="spectate-info">Spectating: <span id="spectate-name"></span></div>
+
+    <div id="kill-feed"></div>
 
     <canvas id="minimap" width="130" height="130"></canvas>
 
+    <button id="settings-btn">⚙ Settings</button>
+
     <div id="controls">
-      WASD — Move &nbsp;|&nbsp; Mouse — Aim &nbsp;|&nbsp; LMB — Shoot &nbsp;|&nbsp; R — Reload
+      WASD Move · Mouse Aim · LMB Shoot · SPACE Dash · G Grenade · E Healthpack · R Reload
     </div>
   </div>
 

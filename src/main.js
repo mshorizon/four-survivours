@@ -3,7 +3,14 @@ import { NetworkManager } from './net/NetworkManager.js';
 import { Interpolator }   from './net/Interpolator.js';
 import { InputHandler }   from './InputHandler.js';
 import { buildMap }       from './GameWorld.js';
-import { PLAYER_COLORS, PLAYER_MAX_HP, WEAPONS, MAP_HALF } from '../shared/constants.js';
+import { AudioManager }   from './audio/AudioManager.js';
+import { ParticleSystem } from './vfx/ParticleSystem.js';
+import {
+  PLAYER_COLORS, PLAYER_MAX_HP, WEAPONS, MAP_HALF, WAVE_SAFE_DELAY,
+  SKIN_COLORS, OUTFIT_COLORS, HAT_TYPES, DEFAULT_APPEARANCE,
+  BOSS_SLAM_RADIUS,
+  GRENADE_RADIUS,
+} from '../shared/constants.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Renderer + Scene + Camera
@@ -43,7 +50,19 @@ const fill = new THREE.DirectionalLight(0x8899cc, 0.4);
 fill.position.set(-8, 10, -10);
 scene.add(fill);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio + VFX
+// ─────────────────────────────────────────────────────────────────────────────
+const audio = new AudioManager();
+const vfx   = new ParticleSystem(scene);
+
+// Unlock AudioContext on first user gesture
+document.addEventListener('pointerdown', () => audio.init(), { once: true });
+document.addEventListener('keydown',     () => audio.init(), { once: true });
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Map group — rebuilt on each game start
+// ─────────────────────────────────────────────────────────────────────────────
 let mapGroup   = null;
 let fireLights = [];
 
@@ -60,18 +79,50 @@ function loadMap(mapId) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Mesh factories
 // ─────────────────────────────────────────────────────────────────────────────
-function makePlayerMesh(color) {
+function makePlayerMesh(slotColor, appearance = {}) {
+  const { skin = 0, outfit = 0, hat = 'cap' } = appearance;
+  const outfitCol = OUTFIT_COLORS[outfit] ?? slotColor;
+  const skinCol   = SKIN_COLORS[skin]   ?? 0xf5c59a;
   const g    = new THREE.Group();
-  const bMat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.15 });
-  const sMat = new THREE.MeshLambertMaterial({ color: 0xf5c59a, emissive: 0xf5c59a, emissiveIntensity: 0.1 });
-  const pMat = new THREE.MeshLambertMaterial({ color: 0x4466aa });
+  const bMat = new THREE.MeshLambertMaterial({ color: outfitCol, emissive: outfitCol, emissiveIntensity: 0.12 });
+  const sMat = new THREE.MeshLambertMaterial({ color: skinCol });
+  const pMat = new THREE.MeshLambertMaterial({ color: 0x2a2a3a });
   const legL = new THREE.Mesh(new THREE.BoxGeometry(0.20,0.45,0.22), pMat); legL.position.set(-0.13,0.225,0);
   const legR = new THREE.Mesh(new THREE.BoxGeometry(0.20,0.45,0.22), pMat); legR.position.set( 0.13,0.225,0);
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.52,0.55,0.32), bMat); body.position.y = 0.725;
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.48,0.48,0.48), sMat); head.position.y = 1.26;
-  const cap  = new THREE.Mesh(new THREE.BoxGeometry(0.50,0.14,0.50), bMat); cap.position.y  = 1.595;
-  const brim = new THREE.Mesh(new THREE.BoxGeometry(0.62,0.06,0.32), bMat); brim.position.set(0,1.575,0.22);
-  [legL,legR,body,head,cap,brim].forEach(m => { m.castShadow = true; g.add(m); });
+  [legL,legR,body,head].forEach(m => { m.castShadow = true; g.add(m); });
+  // Hat
+  if (hat === 'cap') {
+    const cap  = new THREE.Mesh(new THREE.BoxGeometry(0.50,0.14,0.50), bMat); cap.position.y = 1.595; g.add(cap);
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.62,0.06,0.32), bMat); brim.position.set(0,1.575,0.22); g.add(brim);
+  } else if (hat === 'helmet') {
+    const hm = new THREE.Mesh(new THREE.BoxGeometry(0.54,0.22,0.54), bMat); hm.position.y = 1.60; g.add(hm);
+  } else if (hat === 'beanie') {
+    const bn = new THREE.Mesh(new THREE.BoxGeometry(0.50,0.30,0.50), bMat); bn.position.y = 1.64; g.add(bn);
+  }
+  return g;
+}
+
+function makeBossMesh() {
+  const g    = new THREE.Group();
+  const bMat = new THREE.MeshLambertMaterial({ color: 0x1a1010, emissive: 0xff0000, emissiveIntensity: 0.18 });
+  const eMat = new THREE.MeshLambertMaterial({ color: 0xff2200, emissive: 0xff0000, emissiveIntensity: 1.0 });
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.45,1.2,0.5),  bMat); legL.position.set(-0.35,0.6,0);
+  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.45,1.2,0.5),  bMat); legR.position.set( 0.35,0.6,0);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.4,0.8),  bMat); body.position.y = 1.4;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.0,0.9),  bMat); head.position.y = 2.6;
+  [legL,legR,body,head].forEach(m => { m.castShadow = true; g.add(m); });
+  // Glowing eyes
+  [-0.28, 0.28].forEach(x => {
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.2,0.1), eMat);
+    eye.position.set(x, 2.65, 0.46); g.add(eye);
+  });
+  // Shoulder spikes
+  [-0.9, 0.9].forEach(x => {
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.2,0.9,6), bMat);
+    spike.position.set(x, 2.1, 0); spike.rotation.z = x > 0 ? -0.35 : 0.35; g.add(spike);
+  });
   return g;
 }
 
@@ -82,6 +133,8 @@ const ENEMY_PALETTES = {
   tank:    [{ b:0x2a2a2a, h:0x444444 },{ b:0x1a1a1a, h:0x333333 }],
 };
 function makeEnemyMesh(type = 'walker') {
+  if (type === 'boss')      return makeBossMesh();
+  if (type === 'finalboss') return makeFinalBossMesh();
   const g   = new THREE.Group();
   const pal = (ENEMY_PALETTES[type] ?? ENEMY_PALETTES.walker)[Math.floor(Math.random()*2)];
   const bMat = new THREE.MeshLambertMaterial({ color: pal.b });
@@ -123,6 +176,51 @@ const _acidGeo = new THREE.SphereGeometry(0.14,5,4);
 const _acidMat = new THREE.MeshBasicMaterial({ color: 0x88ee22 });
 function makeAcidMesh() { return new THREE.Mesh(_acidGeo, _acidMat); }
 
+const _hpGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+const _hpMat = new THREE.MeshLambertMaterial({ color: 0xff3333, emissive: 0xff1111, emissiveIntensity: 0.5 });
+const _hpCrossMat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.8 });
+function makeHealthpackMesh() {
+  const g    = new THREE.Group();
+  const box  = new THREE.Mesh(_hpGeo, _hpMat); g.add(box);
+  const h    = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.08, 0.08), _hpCrossMat); g.add(h);
+  const v    = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.3), _hpCrossMat); g.add(v);
+  const glowMat = new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.2, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.65, 16), glowMat);
+  ring.rotation.x = -Math.PI/2; ring.position.y = -0.4; g.add(ring);
+  g.position.y = 0.5;
+  return g;
+}
+
+// Grenade pickup mesh
+const _grenGeo = new THREE.SphereGeometry(0.16, 6, 5);
+const _grenMat = new THREE.MeshLambertMaterial({ color: 0x445522, emissive: 0x88aa22, emissiveIntensity: 0.5 });
+function makeGrenadeMesh() { return new THREE.Mesh(_grenGeo, _grenMat); }
+
+function makeFinalBossMesh() {
+  const g    = new THREE.Group();
+  const bMat = new THREE.MeshLambertMaterial({ color: 0x0a0010, emissive: 0x8800ff, emissiveIntensity: 0.3 });
+  const eMat = new THREE.MeshLambertMaterial({ color: 0xaa00ff, emissive: 0xaa00ff, emissiveIntensity: 1.2 });
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.55,1.4,0.6), bMat); legL.position.set(-0.42,0.7,0);
+  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.55,1.4,0.6), bMat); legR.position.set( 0.42,0.7,0);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.5,1.7,1.0), bMat); body.position.y = 1.75;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(1.3,1.3,1.1), bMat); head.position.y = 3.2;
+  [legL,legR,body,head].forEach(m => { m.castShadow = true; g.add(m); });
+  [-0.36, 0.36].forEach(x => {
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.28,0.28,0.1), eMat);
+    eye.position.set(x, 3.28, 0.56); g.add(eye);
+  });
+  [-1.1, 1.1].forEach((x, i) => {
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.28,1.2,6), bMat);
+    spike.position.set(x, 2.7, 0); spike.rotation.z = i === 0 ? 0.4 : -0.4; g.add(spike);
+  });
+  const crownMat = new THREE.MeshBasicMaterial({ color: 0xaa00ff });
+  for (let a = 0; a < 6; a++) {
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.12,0.5,5), crownMat);
+    spike.position.set(Math.cos(a/6*Math.PI*2)*0.55, 3.85, Math.sin(a/6*Math.PI*2)*0.55); g.add(spike);
+  }
+  return g;
+}
+
 const PICKUP_COLORS = { shotgun: 0xff6600, rifle: 0x4488ff, pistol: 0xffdd44 };
 function makePickupMesh(weapon) {
   const g    = new THREE.Group();
@@ -144,20 +242,32 @@ function makePickupMesh(weapon) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Entity maps
 // ─────────────────────────────────────────────────────────────────────────────
-const playerMeshes = new Map();
-const enemyMeshes  = new Map();
-const bulletMeshes = new Map();
-const acidMeshes   = new Map();
-const pickupMeshes = new Map(); // pickupId → Group
+const playerMeshes    = new Map();
+const enemyMeshes     = new Map();
+const bulletMeshes    = new Map();
+const acidMeshes      = new Map();
+const pickupMeshes    = new Map();
+const healthpackMeshes = new Map();
+const grenadeMeshes   = new Map();
 
 function syncPlayers(players) {
   const seen = new Set();
   for (const p of players) {
     seen.add(p.id);
+    const apKey = JSON.stringify(p.appearance);
     if (!playerMeshes.has(p.id)) {
-      const mesh = makePlayerMesh(PLAYER_COLORS[p.slot] ?? 0xffffff);
+      const mesh = makePlayerMesh(PLAYER_COLORS[p.slot] ?? 0xffffff, p.appearance);
       scene.add(mesh);
-      playerMeshes.set(p.id, { mesh });
+      playerMeshes.set(p.id, { mesh, apKey });
+    } else {
+      const ent = playerMeshes.get(p.id);
+      // Rebuild mesh if appearance changed
+      if (p.appearance && ent.apKey !== apKey) {
+        scene.remove(ent.mesh);
+        const mesh = makePlayerMesh(PLAYER_COLORS[p.slot] ?? 0xffffff, p.appearance);
+        scene.add(mesh);
+        playerMeshes.set(p.id, { mesh, apKey });
+      }
     }
     const { mesh } = playerMeshes.get(p.id);
     mesh.position.set(p.x, 0, p.z);
@@ -219,6 +329,33 @@ function syncAcidBlobs(blobs) {
     if (!seen.has(id)) { scene.remove(mesh); acidMeshes.delete(id); }
 }
 
+function syncHealthpacks(hpacks, now) {
+  for (const h of hpacks) {
+    if (!healthpackMeshes.has(h.id)) {
+      const mesh = makeHealthpackMesh();
+      mesh.position.set(h.x, 0, h.z);
+      scene.add(mesh);
+      healthpackMeshes.set(h.id, mesh);
+    }
+    const mesh = healthpackMeshes.get(h.id);
+    mesh.visible = h.active;
+    if (h.active) { mesh.rotation.y = now * 0.0015; mesh.position.y = 0.5 + Math.sin(now * 0.003) * 0.1; }
+  }
+}
+
+function syncGrenades(grenades) {
+  const seen = new Set();
+  for (const g of grenades) {
+    seen.add(g.id);
+    if (!grenadeMeshes.has(g.id)) {
+      const mesh = makeGrenadeMesh(); mesh.position.set(g.x, 0.8, g.z);
+      scene.add(mesh); grenadeMeshes.set(g.id, mesh);
+    } else { grenadeMeshes.get(g.id).position.set(g.x, 0.8, g.z); }
+  }
+  for (const [id, mesh] of grenadeMeshes)
+    if (!seen.has(id)) { scene.remove(mesh); grenadeMeshes.delete(id); }
+}
+
 function syncPickups(pickups, now) {
   for (const pk of pickups) {
     if (!pickupMeshes.has(pk.id)) {
@@ -231,6 +368,62 @@ function syncPickups(pickups, now) {
     mesh.visible = pk.active;
     if (pk.active) mesh.rotation.y = now * 0.001; // spin
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Boss slam rings (visual AOE indicator)
+// ─────────────────────────────────────────────────────────────────────────────
+const _slamRings = [];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// State-diff tracking for audio + VFX triggers
+// ─────────────────────────────────────────────────────────────────────────────
+let _prevEnemyMap = new Map(); // id → {x,z,hp,type}
+let _prevMyHp     = PLAYER_MAX_HP;
+let _shootCdLocal = 0; // local cooldown to deduplicate muzzle flash
+
+function applyEffects(state, dt) {
+  const me = state.players?.find(p => p.id === net.playerId);
+
+  // Muzzle flash + shoot sound — triggered locally to avoid interpolation lag
+  if (me && me.alive && !me.reloading) {
+    _shootCdLocal -= dt;
+    const weapon = me.weapon ?? 'pistol';
+    if (input.lmb && me.ammo > 0 && _shootCdLocal <= 0) {
+      const fw = (WEAPONS[weapon]?.fireRate ?? 0.28);
+      _shootCdLocal = fw;
+      vfx.muzzleFlash(me.x, me.z, me.angle);
+      audio.shoot(weapon);
+    }
+  }
+
+  // Player hurt
+  if (me && me.hp < _prevMyHp) {
+    vfx.playerHurt(me.x, me.z);
+    audio.playerHurt();
+  }
+  if (me) _prevMyHp = me.hp;
+
+  // Enemy deaths + hit sparks (HP decrease)
+  const curMap = new Map((state.enemies ?? []).map(e => [e.id, e]));
+  for (const [id, prev] of _prevEnemyMap) {
+    if (!curMap.has(id)) {
+      if (prev.type === 'boss') vfx.bossDeath(prev.x, prev.z);
+      else vfx.enemyDeath(prev.x, prev.z, prev.type);
+      audio.enemyDeath();
+    }
+  }
+  for (const e of (state.enemies ?? [])) {
+    const prev = _prevEnemyMap.get(e.id);
+    if (prev && e.hp < prev.hp) {
+      vfx.hitSpark(e.x, e.z);
+      audio.hit();
+    }
+  }
+  _prevEnemyMap = curMap;
+
+  // Acid splat when acid blobs disappear
+  // (tracked implicitly via VFX; acid hit is handled by player hurt detection above)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,16 +461,34 @@ net.socket.on('connect',       () => { document.getElementById('lobby-status').t
 net.socket.on('connect_error', (e) => { document.getElementById('lobby-status').textContent = `Connection error: ${e.message}`; });
 net.socket.on('disconnect',    () => { document.getElementById('lobby-status').textContent = 'Disconnected'; });
 
-net.onJoined = ({ slot, roomId }) => {
+net.onJoined = ({ slot, roomId, token, reconnected }) => {
   mySlot = slot;
-  document.getElementById('lobby').style.display     = 'none';
-  document.getElementById('room-wait').style.display = 'flex';
-  document.getElementById('wait-room-code').textContent = `Room: ${roomId ?? '—'}`;
+  if (token && roomId) localStorage.setItem('fsReconnect', JSON.stringify({ token, roomId }));
+  if (!reconnected) {
+    document.getElementById('lobby').style.display     = 'none';
+    document.getElementById('room-wait').style.display = 'flex';
+    document.getElementById('wait-room-code').textContent = `Room: ${roomId ?? '—'}`;
+  }
 };
+
+// Auto-reconnect on connect if token stored
+net.socket.on('connect', () => {
+  const saved = (() => { try { return JSON.parse(localStorage.getItem('fsReconnect') ?? 'null'); } catch(_) { return null; } })();
+  if (saved?.token && gameStarted === false) {
+    net.tryReconnect(saved.token, saved.roomId);
+  }
+});
 
 net.onRoomFull = () => { alert('Room is full (4/4). Try a different room code.'); };
 
-net.socket.on('lobbyState', ({ players, readyCount, totalCount }) => {
+net.socket.on('lobbyState', ({ players, readyCount, totalCount, voteCounts }) => {
+  // Update vote counts on buttons
+  if (voteCounts) {
+    for (const [mapId, count] of Object.entries(voteCounts)) {
+      const el = document.getElementById(`vote-count-${mapId}`);
+      if (el) el.textContent = count;
+    }
+  }
   const list = document.getElementById('player-list');
   list.innerHTML = '';
   for (const p of players) {
@@ -297,17 +508,28 @@ net.socket.on('lobbyState', ({ players, readyCount, totalCount }) => {
 net.socket.on('gameStart', ({ wave, mapId }) => {
   document.getElementById('room-wait').style.display = 'none';
   document.getElementById('game-over').style.display = 'none';
-  _isReady = false; _goReady = false;
+  document.getElementById('victory').style.display   = 'none';
+  _isReady = false; _goReady = false; _vicReady = false;
   document.getElementById('ready-btn').textContent = 'Ready';
   document.getElementById('ready-btn').classList.remove('is-ready');
   document.getElementById('go-ready-btn').textContent = 'Play Again';
   document.getElementById('go-ready-btn').classList.remove('is-ready');
   loadMap(mapId);
-  gameStarted = true;
+  gameStarted    = true;
+  _prevMyHp      = PLAYER_MAX_HP;
+  _prevEnemyMap  = new Map();
+  _shootCdLocal  = 0;
+  audio.startAmbient?.(mapId);
+  // Reset safe room UI
+  const srEl = document.getElementById('safe-room-status');
+  if (srEl) { srEl.classList.remove('open'); srEl.style.display = 'none'; }
+  // Reset vote buttons for next lobby
+  _myVote = null;
+  document.querySelectorAll('.map-vote-btn').forEach(b => b.classList.remove('voted'));
   updateWaveHUD(wave);
   showMsg(`WAVE ${wave}`, '#ffdd44', 2200);
   // Clear entity maps for fresh game
-  [playerMeshes, enemyMeshes, bulletMeshes, acidMeshes, pickupMeshes].forEach(m => {
+  [playerMeshes, enemyMeshes, bulletMeshes, acidMeshes, pickupMeshes, healthpackMeshes].forEach(m => {
     m.forEach(v => scene.remove(v.mesh ?? v));
     m.clear();
   });
@@ -332,13 +554,155 @@ net.socket.on('gameOver', ({ wave, survivalTime, players }) => {
 });
 
 net.onPlayerDied = ({ playerId }) => {
-  if (playerId === net.playerId) showMsg('YOU DIED', '#ff4444', 0);
+  if (playerId === net.playerId) { showMsg('YOU DIED', '#ff4444', 0); shakeCamera(0.5); }
 };
 net.onPlayerWon  = ({ name }) => { showMsg(`${name} reached the Safe House!`, '#44ff88', 4000); };
-net.onNewWave    = ({ wave }) => { updateWaveHUD(wave); showMsg(`WAVE ${wave}`, '#ffdd44', 2200); };
+net.onNewWave    = ({ wave }) => { updateWaveHUD(wave); showMsg(`WAVE ${wave}`, '#ffdd44', 2200); audio.newWave(); };
 net.onWaveClear  = ({ nextWave, delay }) => { showMsg(`WAVE CLEAR — Wave ${nextWave} in ${delay}s`, '#88ffaa', 3500); };
 
+net.socket.on('bossSpawn', ({ wave }) => {
+  showMsg(`⚠ BOSS INCOMING — WAVE ${wave}`, '#ff2200', 4000);
+  audio.bossSpawn();
+});
+
+net.socket.on('bossSlam', ({ x, z, radius }) => {
+  audio.bossSlam();
+  showMsg('BOSS SLAM!', '#ff4400', 1200);
+  // AOE ring that fades out
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.4, radius, 32),
+    new THREE.MeshBasicMaterial({ color: 0xff3300, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, 0.08, z);
+  scene.add(ring);
+  _slamRings.push({ mesh: ring, life: 0.9, maxLife: 0.9 });
+});
+
+net.socket.on('playerSafe', ({ name }) => {
+  showMsg(`${name} reached the safe room!`, '#44ff88', 2500);
+});
+
+net.socket.on('safeRoomOpen', () => {
+  const el = document.getElementById('safe-room-status');
+  if (el) { el.classList.add('open'); el.innerHTML = 'SAFE ROOM OPEN'; }
+});
+
+net.socket.on('mapComplete', ({ completedMap, nextMap }) => {
+  showMsg(`MAP CLEAR! Loading ${nextMap}...`, '#ffdd44', 3500);
+});
+
+net.socket.on('healthpackPickup', ({ playerId }) => {
+  if (playerId === net.playerId) { showMsg('+HEALTH PACK', '#ff8888', 1500); audio.pickup(); }
+});
+
+net.socket.on('weaponPickup', ({ playerId }) => {
+  if (playerId === net.playerId) audio.pickup();
+});
+
+// ── Kill feed ─────────────────────────────────────────────────────────────────
+const ENEMY_LABELS = { walker:'Walker', runner:'Runner', spitter:'Spitter', tank:'TANK', boss:'BOSS', finalboss:'FINAL BOSS' };
+net.onKill = ({ name, slot, enemyType }) => {
+  const feed = document.getElementById('kill-feed');
+  if (!feed) return;
+  const col = '#' + (PLAYER_COLORS[slot] ?? 0xffffff).toString(16).padStart(6,'0');
+  const row = document.createElement('div');
+  row.className = 'kf-row';
+  row.innerHTML = `<span style="color:${col}">${name}</span> killed ${ENEMY_LABELS[enemyType] ?? enemyType}`;
+  feed.appendChild(row);
+  setTimeout(() => { row.style.opacity = '0'; setTimeout(() => row.remove(), 400); }, 3000);
+  while (feed.children.length > 5) feed.removeChild(feed.firstChild);
+};
+
+// ── Grenade explosion ─────────────────────────────────────────────────────────
+net.socket.on('grenadeExplode', ({ x, z, radius }) => {
+  audio.grenadeExplode();
+  shakeCamera(0.4);
+  vfx.bossDeath(x, z); // reuse big explosion VFX
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.3, radius, 32),
+    new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2; ring.position.set(x, 0.08, z);
+  scene.add(ring);
+  _slamRings.push({ mesh: ring, life: 0.6, maxLife: 0.6 });
+});
+
+// ── Victory ──────────────────────────────────────────────────────────────────
+net.onVictory = ({ wave, survivalTime, players }) => {
+  gameStarted = false;
+  document.getElementById('vic-wave').textContent = wave;
+  document.getElementById('vic-time').textContent = _fmtTime(survivalTime);
+  const list = document.getElementById('vic-player-list');
+  list.innerHTML = '';
+  [...players].sort((a,b) => b.kills - a.kills).forEach(p => {
+    const color = '#' + (PLAYER_COLORS[p.slot] ?? 0xffffff).toString(16).padStart(6,'0');
+    const row = document.createElement('div');
+    row.className = 'go-row';
+    row.innerHTML = `<div class="go-avatar" style="background:${color}"></div><div class="go-name">${p.name}</div><div class="go-kills">${p.kills} kills</div>`;
+    list.appendChild(row);
+  });
+  document.getElementById('vic-wait-status').textContent = 'Waiting for all players...';
+  document.getElementById('victory').style.display = 'flex';
+  audio.victory();
+};
+
+// ── Reconnect ─────────────────────────────────────────────────────────────────
+net.socket.on('reconnectFailed', () => {
+  localStorage.removeItem('fsReconnect');
+});
+
 function _fmtTime(s) { const m = Math.floor(s/60); return m > 0 ? `${m}m ${s%60}s` : `${s}s`; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Character appearance — build UI & persist to localStorage
+// ─────────────────────────────────────────────────────────────────────────────
+let _appearance = { ...DEFAULT_APPEARANCE };
+try { Object.assign(_appearance, JSON.parse(localStorage.getItem('appearance') ?? '{}')); } catch(_) {}
+
+function _saveAppearance() {
+  localStorage.setItem('appearance', JSON.stringify(_appearance));
+  if (net.connected && net.playerId) net.socket.emit('setAppearance', _appearance);
+}
+
+// Build skin swatches
+const skinRow = document.getElementById('skin-swatches');
+SKIN_COLORS.forEach((col, i) => {
+  const sw = document.createElement('div');
+  sw.className = 'swatch' + (_appearance.skin === i ? ' selected' : '');
+  sw.style.background = '#' + col.toString(16).padStart(6, '0');
+  sw.addEventListener('click', () => {
+    _appearance.skin = i; _saveAppearance();
+    skinRow.querySelectorAll('.swatch').forEach((s, j) => s.classList.toggle('selected', j === i));
+  });
+  skinRow.appendChild(sw);
+});
+
+// Build outfit swatches
+const outfitRow = document.getElementById('outfit-swatches');
+OUTFIT_COLORS.forEach((col, i) => {
+  const sw = document.createElement('div');
+  sw.className = 'swatch' + (_appearance.outfit === i ? ' selected' : '');
+  sw.style.background = '#' + col.toString(16).padStart(6, '0');
+  sw.addEventListener('click', () => {
+    _appearance.outfit = i; _saveAppearance();
+    outfitRow.querySelectorAll('.swatch').forEach((s, j) => s.classList.toggle('selected', j === i));
+  });
+  outfitRow.appendChild(sw);
+});
+
+// Build hat buttons
+const hatRow = document.getElementById('hat-buttons');
+HAT_TYPES.forEach(hat => {
+  const btn = document.createElement('button');
+  btn.className = 'hat-btn' + (_appearance.hat === hat ? ' selected' : '');
+  btn.textContent = hat;
+  btn.addEventListener('click', () => {
+    _appearance.hat = hat; _saveAppearance();
+    hatRow.querySelectorAll('.hat-btn').forEach(b => b.classList.toggle('selected', b.textContent === hat));
+  });
+  hatRow.appendChild(btn);
+});
 
 // ── Lobby join button ─────────────────────────────────────────────────────────
 document.getElementById('join-btn').addEventListener('click', () => {
@@ -347,8 +711,8 @@ document.getElementById('join-btn').addEventListener('click', () => {
   const $s = document.getElementById('lobby-status');
   if (!net.connected) {
     $s.textContent = 'Waiting for server connection...';
-    net.socket.once('connect', () => { $s.textContent = 'Joining room...'; net.joinRoom(roomId, name); });
-  } else { $s.textContent = 'Joining room...'; net.joinRoom(roomId, name); }
+    net.socket.once('connect', () => { $s.textContent = 'Joining room...'; net.joinRoom(roomId, name, _appearance); });
+  } else { $s.textContent = 'Joining room...'; net.joinRoom(roomId, name, _appearance); }
 });
 
 // ── Ready buttons ─────────────────────────────────────────────────────────────
@@ -366,6 +730,74 @@ document.getElementById('go-ready-btn').addEventListener('click', () => {
   btn.textContent = _goReady ? 'Cancel' : 'Play Again';
   btn.classList.toggle('is-ready', _goReady);
 });
+
+// ── Map voting buttons ────────────────────────────────────────────────────────
+let _myVote = null;
+document.querySelectorAll('.map-vote-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    _myVote = btn.dataset.map;
+    net.socket.emit('mapVote', _myVote);
+    document.querySelectorAll('.map-vote-btn').forEach(b => b.classList.remove('voted'));
+    btn.classList.add('voted');
+  });
+});
+
+// ── Use healthpack button ─────────────────────────────────────────────────────
+document.getElementById('use-healthpack-btn').addEventListener('click', () => {
+  net.socket.emit('useHealthpack');
+});
+
+// ── Victory ready button ──────────────────────────────────────────────────────
+let _vicReady = false;
+document.getElementById('vic-ready-btn')?.addEventListener('click', () => {
+  _vicReady = !_vicReady;
+  net.socket.emit('playerReady', _vicReady);
+  const btn = document.getElementById('vic-ready-btn');
+  btn.textContent = _vicReady ? 'Cancel' : 'Play Again';
+  btn.classList.toggle('is-ready', _vicReady);
+});
+
+// ── Settings overlay ──────────────────────────────────────────────────────────
+document.getElementById('settings-btn')?.addEventListener('click', () => {
+  document.getElementById('settings-overlay').style.display = 'flex';
+});
+document.getElementById('close-settings')?.addEventListener('click', () => {
+  document.getElementById('settings-overlay').style.display = 'none';
+});
+
+// ── Volume slider ─────────────────────────────────────────────────────────────
+document.getElementById('volume-slider')?.addEventListener('input', (e) => {
+  audio.setVolume(Number(e.target.value) / 100);
+});
+
+// ── Public room list ──────────────────────────────────────────────────────────
+async function loadRooms() {
+  const list = document.getElementById('room-list');
+  if (!list) return;
+  try {
+    const data = await fetch('/api/rooms').then(r => r.json());
+    if (data.length === 0) {
+      list.innerHTML = '<div class="room-item" style="opacity:0.5">No active rooms</div>';
+      return;
+    }
+    list.innerHTML = data.map(r =>
+      `<div class="room-item" style="cursor:pointer" data-room="${r.id}">
+         <b>${r.id}</b> — ${r.playerCount}/4 players, wave ${r.wave ?? 1}${r.gameStarted ? ' (in progress)' : ''}
+       </div>`
+    ).join('');
+    list.querySelectorAll('.room-item[data-room]').forEach(el => {
+      el.addEventListener('click', () => {
+        document.getElementById('room-input').value = el.dataset.room;
+      });
+    });
+  } catch (_) {
+    list.innerHTML = '<div class="room-item" style="opacity:0.5">Could not load rooms</div>';
+  }
+}
+
+document.getElementById('refresh-rooms')?.addEventListener('click', loadRooms);
+// Load on page ready if section exists
+if (document.getElementById('room-list')) loadRooms();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HUD
@@ -397,7 +829,10 @@ function updateHUD(state) {
     document.getElementById(`p-hp-${s}`).style.width    = (p.hp / PLAYER_MAX_HP * 100).toFixed(1) + '%';
     document.getElementById(`p-ammo-${s}`).textContent  = p.alive ? `AMMO: ${p.ammo}/${WEAPONS[p.weapon]?.ammoMax ?? '?'}` : '';
     document.getElementById(`p-weapon-${s}`).textContent = p.alive ? (p.weapon?.toUpperCase() ?? '') : '';
-    document.getElementById(`p-dead-${s}`).style.display = p.alive ? 'none' : 'block';
+    document.getElementById(`p-dead-${s}`).style.display = (!p.alive && !p.disconnected) ? 'block' : 'none';
+    const dcEl = document.getElementById(`p-dc-${s}`);
+    if (dcEl) dcEl.style.display = p.disconnected ? 'block' : 'none';
+    if (card) card.classList.toggle('is-dashing', !!p.dashing);
   }
   for (let s = 0; s < 4; s++)
     if (!active.has(s)) document.getElementById(`p-card-${s}`)?.classList.remove('active');
@@ -405,6 +840,35 @@ function updateHUD(state) {
   const me = state.players.find(p => p.id === net.playerId);
   if (me?.reloading) { $reBar.style.display = 'block'; $reFill.style.width = '60%'; }
   else $reBar.style.display = 'none';
+
+  // Action bar (healthpack + grenades)
+  const actionBar = document.getElementById('action-bar');
+  if (me && me.alive) {
+    actionBar.style.display = 'flex';
+    document.getElementById('hp-pack-count').textContent = me.healthpacks;
+    document.getElementById('use-healthpack-btn').disabled = me.healthpacks === 0 || me.hp >= PLAYER_MAX_HP;
+    document.getElementById('grenade-count').textContent = me.grenadeCount ?? 0;
+  } else {
+    actionBar.style.display = 'none';
+  }
+  // Ping
+  const pingEl = document.getElementById('ping-display');
+  if (pingEl) pingEl.textContent = `Ping: ${net.ping}ms`;
+
+  // Safe room status
+  const srEl = document.getElementById('safe-room-status');
+  const cdEl = document.getElementById('safe-countdown');
+  if (srEl && gameStarted) {
+    if (state.safeRoomOpen) {
+      srEl.style.display = 'block';
+      srEl.classList.add('open');
+      srEl.innerHTML = 'SAFE ROOM OPEN';
+    } else {
+      srEl.style.display = 'block';
+      srEl.classList.remove('open');
+      cdEl.textContent = state.safeSecondsLeft ?? WAVE_SAFE_DELAY;
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -435,11 +899,11 @@ function drawMinimap(state) {
 
   // Enemies
   if (state.enemies) {
-    const ECOL = { walker:'#ff4444', runner:'#ff8844', spitter:'#aaff22', tank:'#ff2222' };
+    const ECOL = { walker:'#ff4444', runner:'#ff8844', spitter:'#aaff22', tank:'#ff2222', boss:'#ff00aa', finalboss:'#cc00ff' };
     for (const e of state.enemies) {
       const [ex, ez] = w2m(e.x, e.z);
       mmCtx.fillStyle = ECOL[e.type] ?? '#ff4444';
-      const r = e.type === 'tank' ? 3.5 : 2;
+      const r = e.type === 'finalboss' ? 7 : e.type === 'boss' ? 5 : e.type === 'tank' ? 3.5 : 2;
       mmCtx.beginPath(); mmCtx.arc(ex, ez, r, 0, Math.PI*2); mmCtx.fill();
     }
   }
@@ -472,9 +936,34 @@ function drawMinimap(state) {
 // Camera follow
 // ─────────────────────────────────────────────────────────────────────────────
 const _camTarget = new THREE.Vector3();
+let _shakeAmt = 0;
+let _spectating = false;
+function shakeCamera(amount) { _shakeAmt = Math.max(_shakeAmt, amount); }
+
 function followLocalPlayer(state) {
   const me = state?.players?.find(p => p.id === net.playerId);
-  if (!me) return;
+
+  // Spectator: follow alive player when local player is dead
+  if (!me?.alive) {
+    const target = state?.players?.find(p => p.alive);
+    if (target) {
+      _camTarget.set(target.x + CAM_OFFSET.x, CAM_OFFSET.y, target.z + CAM_OFFSET.z);
+      camera.position.lerp(_camTarget, 0.08);
+      camera.lookAt(target.x, 0, target.z);
+    }
+    if (!_spectating) {
+      _spectating = true;
+      const el = document.getElementById('spectate-info');
+      const nm = document.getElementById('spectate-name');
+      if (el && target) { nm.textContent = target.name; el.style.display = 'block'; }
+    }
+    return;
+  }
+  if (_spectating) {
+    _spectating = false;
+    document.getElementById('spectate-info').style.display = 'none';
+  }
+
   _camTarget.set(me.x + CAM_OFFSET.x, CAM_OFFSET.y, me.z + CAM_OFFSET.z);
   camera.position.lerp(_camTarget, 0.1);
   camera.lookAt(me.x, 0, me.z);
@@ -486,34 +975,65 @@ function followLocalPlayer(state) {
 // Game loop
 // ─────────────────────────────────────────────────────────────────────────────
 let lastInputTime = 0;
+let _lastLoop     = performance.now();
 const INPUT_RATE  = 1000 / 60;
 
 function loop() {
   requestAnimationFrame(loop);
   const now = performance.now();
+  const dt  = Math.min((now - _lastLoop) / 1000, 0.1);
+  _lastLoop = now;
 
   fireLights.forEach(fl => {
     fl.intensity = 2.5 + Math.sin(now * 0.008 + fl.position.x) * 0.8;
   });
 
+  // Particle update
+  vfx.update(dt);
+
+  // Screen shake decay + apply
+  if (_shakeAmt > 0.001) {
+    _shakeAmt *= Math.pow(0.1, dt * 12);
+    camera.position.x += (Math.random() - 0.5) * _shakeAmt;
+    camera.position.y += (Math.random() - 0.5) * _shakeAmt * 0.3;
+  } else {
+    _shakeAmt = 0;
+  }
+
+  // Slam ring fade
+  for (let i = _slamRings.length - 1; i >= 0; i--) {
+    const s = _slamRings[i];
+    s.life -= dt;
+    s.mesh.material.opacity = Math.max(0, (s.life / s.maxLife) * 0.65);
+    if (s.life <= 0) { scene.remove(s.mesh); _slamRings.splice(i, 1); }
+  }
+
   if (gameStarted && now - lastInputTime >= INPUT_RATE && net.connected && net.playerId) {
     lastInputTime = now;
+    const doReload  = input.consumeReload();
+    const doDash    = input.consumeDash();
+    const doGrenade = input.consumeGrenade();
+    if (doReload)  audio.reload();
+    if (doDash)    audio.dash();
     net.sendInput({
       w: input.isDown('KeyW') || input.isDown('ArrowUp'),
       s: input.isDown('KeyS') || input.isDown('ArrowDown'),
       a: input.isDown('KeyA') || input.isDown('ArrowLeft'),
       d: input.isDown('KeyD') || input.isDown('ArrowRight'),
-    }, getMouseAngle(), input.lmb, input.consumeReload());
+    }, getMouseAngle(), input.lmb, doReload, input.consumeUse(), doDash, doGrenade);
   }
 
   const state = interp.get() ?? net.latestState;
   if (state && gameStarted) {
     try {
+      applyEffects(state, dt);
       syncPlayers(state.players);
       syncEnemies(state.enemies);
       syncBullets(state.bullets ?? []);
       syncAcidBlobs(state.acidBlobs ?? []);
       syncPickups(state.pickups ?? [], now);
+      syncHealthpacks(state.healthpacks ?? [], now);
+      syncGrenades(state.grenades ?? []);
       followLocalPlayer(state);
       updateHUD(state);
       drawMinimap(state);

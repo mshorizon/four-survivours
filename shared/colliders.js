@@ -1,0 +1,86 @@
+// Static collision geometry per map.
+// box  → { x, z, hw, hd }   (half-width / half-depth, axis-aligned)
+// circ → { x, z, r }
+
+export const MAP_COLLIDERS = {
+  city: {
+    boxes: [
+      // Buildings
+      { x: -14, z: -14, hw: 4.4, hd: 4.4 },
+      { x:  14, z: -14, hw: 3.9, hd: 3.9 },
+      { x: -14, z:  14, hw: 4.9, hd: 4.4 },
+      { x:  14, z:  14, hw: 4.4, hd: 4.4 },
+      { x: -20, z:   2, hw: 2.4, hd: 3.4 },
+      { x:  20, z:  -2, hw: 2.4, hd: 3.4 },
+      { x:   0, z: -21, hw: 3.9, hd: 2.4 },
+      // Barricades
+      { x:  3, z: -1.5, hw: 1.1, hd: 0.18 },
+      { x: -3, z: -1.5, hw: 1.1, hd: 0.18 },
+      { x:  3, z:  2.0, hw: 1.1, hd: 0.18 },
+      { x: -3, z:  2.0, hw: 1.1, hd: 0.18 },
+      // Cars (approximate, ignore rotation)
+      { x: -5.5, z: -7.5, hw: 0.85, hd: 1.75 },
+      { x:  8.5, z:  6.5, hw: 1.75, hd: 0.85 },
+      { x: -9.0, z:  5.0, hw: 0.85, hd: 1.75 },
+    ],
+    circles: [],
+  },
+
+  forest: {
+    boxes: [],
+    circles: [
+      // Tree trunks (from treeDef in forest.js)
+      ...[
+        [-15,-15],[-12,-18],[-18,-12],[-16,-10],[-10,-16],
+        [ 15,-15],[ 12,-18],[ 18,-12],[ 16,-10],[ 10,-16],
+        [-15, 15],[-12, 18],[-18, 12],[-16, 10],[-10, 16],
+        [ 15, 15],[ 12, 18],[ 18, 12],[ 16, 10],[ 10, 16],
+        [-21,  0],[-21,  5],[-21, -5],
+        [ 21,  0],[ 21,  5],[ 21, -5],
+        [  0, 21],[  5, 21],[ -5, 21],
+        [ -4,-12],[  4,-12],[-12,  4],[ 12,  4],
+      ].map(([x, z]) => ({ x, z, r: 0.32 })),
+      // Boulders
+      { x: -7, z:  7, r: 0.8 },
+      { x:  8, z: -8, r: 0.8 },
+      { x:-10, z:  0, r: 0.7 },
+      { x:  7, z: 13, r: 0.7 },
+      // Fallen logs (approximate as circles)
+      { x:  6, z: -5, r: 0.3 },
+      { x: -6, z:  4, r: 0.3 },
+      { x:  9, z: 10, r: 0.3 },
+    ],
+  },
+
+  industrial: {
+    boxes: [
+      // Warehouses
+      { x: -14, z: -14, hw: 4.9, hd: 4.9 },
+      { x:  14, z: -14, hw: 4.9, hd: 4.9 },
+      { x: -14, z:  14, hw: 4.9, hd: 4.9 },
+      { x:  14, z:  14, hw: 4.4, hd: 4.9 },
+      { x: -21, z:   0, hw: 1.9, hd: 3.9 },
+      { x:  21, z:   0, hw: 2.4, hd: 3.9 },
+      // Shipping containers (r≈0 → hw=1.2,hd=2.9; r≈PI/2 → swap)
+      { x:  4, z:  -6, hw: 1.2, hd: 2.9 },
+      { x:  7, z:  -6, hw: 1.2, hd: 2.9 },
+      { x:  4, z:   6, hw: 1.2, hd: 2.9 },
+      { x: -4, z:  -6, hw: 1.2, hd: 2.9 },
+      { x: -7, z:   5, hw: 1.2, hd: 2.9 },
+      { x:  4, z: -10, hw: 2.9, hd: 1.2 },
+      { x: -5, z: -10, hw: 2.9, hd: 1.2 },
+      { x:  6, z:  10, hw: 1.2, hd: 2.9 },
+    ],
+    circles: [
+      // Oil drums
+      { x:  3.0, z:  3.0, r: 0.3 },
+      { x:  3.8, z:  3.0, r: 0.3 },
+      { x:  3.0, z:  3.8, r: 0.3 },
+      { x: -3.0, z: -3.0, r: 0.3 },
+      { x: -3.8, z: -3.0, r: 0.3 },
+    ],
+  },
+};
+
+export const PLAYER_RADIUS = 0.42;
+export const ENEMY_RADII   = { walker: 0.40, runner: 0.30, spitter: 0.40, tank: 0.70, boss: 1.20, finalboss: 1.60 };

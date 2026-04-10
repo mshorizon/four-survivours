@@ -20,6 +20,17 @@ const io = new Server(httpServer, {
 
 // Serve built client in production
 app.use(express.static(join(__dirname, '../dist')));
+
+// Room list API
+app.get('/api/rooms', (_req, res) => {
+  const list = [];
+  for (const [id, room] of rooms) {
+    if (room.size > 0)
+      list.push({ id, playerCount: room.size, gameStarted: room.gameStarted, wave: room.wave });
+  }
+  res.json(list);
+});
+
 app.get('*', (_req, res) =>
   res.sendFile(join(__dirname, '../dist/index.html'))
 );
@@ -45,7 +56,7 @@ function getRoomOf(socketId) {
 io.on('connection', (socket) => {
   console.log(`[+] ${socket.id.slice(0, 8)} connected`);
 
-  socket.on('joinRoom', ({ roomId, name }) => {
+  socket.on('joinRoom', ({ roomId, name, appearance }) => {
     const id   = (roomId || 'default').trim().toLowerCase() || 'default';
     const room = getOrCreateRoom(id);
 
@@ -55,8 +66,13 @@ io.on('connection', (socket) => {
     }
 
     const slotIndex = _nextSlot(room);
-    room.addPlayer(socket, name || 'Survivor', slotIndex);
+    room.addPlayer(socket, name || 'Survivor', slotIndex, appearance ?? null);
     io.to(id).emit('roomInfo', { roomId: id, playerCount: room.size });
+  });
+
+  socket.on('setAppearance', (appearance) => {
+    const room = getRoomOf(socket.id);
+    if (room) room.setAppearance(socket.id, appearance);
   });
 
   socket.on('input', (packet) => {
@@ -67,6 +83,29 @@ io.on('connection', (socket) => {
   socket.on('playerReady', (isReady) => {
     const room = getRoomOf(socket.id);
     if (room) room.setReady(socket.id, !!isReady);
+  });
+
+  socket.on('mapVote', (mapId) => {
+    const room = getRoomOf(socket.id);
+    if (room) room.setMapVote(socket.id, mapId);
+  });
+
+  socket.on('useHealthpack', () => {
+    const room = getRoomOf(socket.id);
+    if (room) room.useHealthpack(socket.id);
+  });
+
+  socket.on('tryReconnect', ({ token, roomId }) => {
+    const id   = (roomId || 'default').trim().toLowerCase() || 'default';
+    const room = rooms.get(id);
+    if (!room || !room.tryReconnect(socket, token)) {
+      // Reconnect failed — treat as fresh join
+      socket.emit('reconnectFailed');
+    }
+  });
+
+  socket.on('ping', ({ ts }) => {
+    socket.emit('pong', { ts });
   });
 
   socket.on('disconnect', () => {
