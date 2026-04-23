@@ -13,7 +13,6 @@ const NEIGHBORS = [
   [1,0,1],[-1,0,1],[0,1,1],[0,-1,1],
   [1,1,1.414],[-1,1,1.414],[1,-1,1.414],[-1,-1,1.414],
 ];
-const CARDINAL = [[1,0],[-1,0],[0,1],[0,-1]];
 
 export class FlowField {
   constructor(mapId) {
@@ -28,7 +27,7 @@ export class FlowField {
     this._timer -= dt;
     if (this._timer > 0) return;
     this._timer = REFRESH;
-    const alive = players.filter(p => p.alive && !p.inSafeZone);
+    const alive = players.filter(p => p.alive && !p.inSafeZone && !p.disconnected);
     if (alive.length > 0) this._rebuild(alive);
   }
 
@@ -70,13 +69,13 @@ export class FlowField {
       }
     }
 
-    // Direction = toward the lowest-dist cardinal neighbour
+    // Direction = toward the lowest-dist neighbour (all 8 directions so corners route diagonally)
     for (let z = 0; z < GRID_SIZE; z++) {
       for (let x = 0; x < GRID_SIZE; x++) {
         const i = z * GRID_SIZE + x;
         if (dist[i] === Infinity) { this._field[i*2] = 0; this._field[i*2+1] = 0; continue; }
         let bestD = Infinity, bdx = 0, bdz = 0;
-        for (const [ox, oz] of CARDINAL) {
+        for (const [ox, oz] of NEIGHBORS) {
           const nx = x + ox, nz = z + oz;
           if (nx < 0 || nx >= GRID_SIZE || nz < 0 || nz >= GRID_SIZE) continue;
           const d = dist[nz * GRID_SIZE + nx];

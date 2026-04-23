@@ -2,25 +2,29 @@ import {
   TICK_RATE, MAX_PLAYERS, PLAYER_SPEED, PLAYER_MAX_HP,
   MAP_HALF, SAFE_ZONE, SAFE_ZONE_RADIUS,
   WAVE_BASE, WAVE_SCALE, NEXT_WAVE_DELAY, MAX_ENEMIES, SPAWN_POINTS,
-  WEAPONS, WEAPON_PICKUPS, WEAPON_PICKUP_RADIUS, WEAPON_RESPAWN_TIME,
-  ENEMY_TYPES, WAVE_COMPOSITIONS,
+  WEAPONS, WEAPON_PICKUPS, WEAPON_PICKUP_RADIUS, WEAPON_RESPAWN_TIME, SPECIAL_WEAPON_DROPS,
+  ENEMY_TYPES, WAVE_COMPOSITIONS, SPECIAL_TYPES, MAX_SPECIALS_PER_WAVE,
   ACID_SPEED, ACID_RANGE, ACID_DAMAGE,
   MAPS, WAVE_SAFE_DELAY,
-  HEALTHPACK_HEAL, HEALTHPACK_PICKUP_RADIUS, HEALTHPACK_RESPAWN_TIME,
-  PLAYER_MAX_HEALTHPACKS, HEALTHPACK_POSITIONS,
+  HEALTHPACK_HEAL, HEALTHPACK_PICKUP_RADIUS,
+  PLAYER_MAX_HEALTHPACKS,
   BOSS_SLAM_CD, BOSS_SLAM_RADIUS, BOSS_SLAM_DAMAGE,
   FINAL_BOSS_WAVE, FINAL_BOSS_SLAM_CD, FINAL_BOSS_SLAM_RADIUS, FINAL_BOSS_SLAM_DAMAGE,
   DEFAULT_APPEARANCE,
   DASH_CD, DASH_DISTANCE, DASH_IFRAME,
-  GRENADE_MAX, GRENADE_DAMAGE, GRENADE_RADIUS, GRENADE_FUSE, GRENADE_SPEED,
-  RECONNECT_TIMEOUT,
+  GRENADE_MAX, GRENADE_STARTING, GRENADE_DAMAGE, GRENADE_RADIUS, GRENADE_FUSE, GRENADE_SPEED,
+  GRENADE_THROW_RANGE, GRENADE_LAND_FUSE, GRENADE_DROP_CHANCE, GRENADE_PICKUP_RADIUS,
+  RECONNECT_TIMEOUT, LOBBY_RECONNECT_TIMEOUT,
   DOWNED_HP_DRAIN, DOWNED_MAX_HP, REVIVE_RANGE, REVIVE_TIME,
   TANK_CHARGE_CD, TANK_CHARGE_SPEED, TANK_CHARGE_DURATION, TANK_CHARGE_DAMAGE,
   ACID_PUDDLE_DURATION, ACID_PUDDLE_RADIUS, ACID_PUDDLE_DRAIN,
   PERK_WAVE_INTERVAL, PERK_SELECT_TIME, PERKS,
   JUMPER_PIN_DAMAGE, JUMPER_RESCUE_RANGE,
-  TONGUE_SPEED, TONGUE_RANGE, TONGUE_HP, TONGUE_PULL_SPEED,
+  DROP_LIFETIME,
+  TONGUE_SPEED, TONGUE_RANGE, TONGUE_HP, TONGUE_PULL_SPEED, TONGUE_REACH_DAMAGE,
   BEACON_MAX, BEACON_STARTING, BEACON_DURATION, BEACON_ATTRACT_RADIUS,
+  CITY_FUEL_POSITIONS, CITY_REPAIR_KIT_POS, CITY_MISSION_CAR,
+  MISSION_PICKUP_RADIUS, MISSION_DELIVER_RADIUS, MISSION_REPAIR_TIME, MISSION_DEFEND_COUNT,
 } from '../shared/constants.js';
 import { MAP_COLLIDERS, PLAYER_RADIUS, ENEMY_RADII } from '../shared/colliders.js';
 import { FlowField } from './pathfinding/FlowField.js';
@@ -53,6 +57,8 @@ export class GameRoom {
     this.gameStarted = false;
     this._readySet   = new Set();
     this._votes      = new Map();
+    this._fogVotes   = new Map(); // socketId → 'yes' | 'no'
+    this.fogEnabled  = true;
     this._nextEnemyId  = 1;
     this._nextBulletId = 1;
     this._nextBlobId   = 1;
@@ -64,12 +70,22 @@ export class GameRoom {
     this._kills        = new Map();
     this._gameStartTime = 0;
     this._pickups    = WEAPON_PICKUPS.map(p => ({ ...p, respawnTimer: 0 }));
-    this._healthpacks = HEALTHPACK_POSITIONS.map(h => ({ ...h, respawnTimer: 0 }));
+    this._weaponDrops   = [];
+    this._nextDropId    = 1;
+    this._healthpacks = [];
+    this._nextHpDropId = 1;
     this._grenadeProj = [];
+    this._grenadePicks = [];
+    this._nextGrenPickId = 1;
     this._acidPuddles = [];
     this._tongues     = [];
     this._beacons     = [];
     this._nextTongueId = 1;
+    this._missionPhase   = 0;
+    this._fuelDelivered  = 0;
+    this._repairProgress = 0;
+    this._phase1Timer    = 0;
+    this._missionItems   = [];
     this._perkPhase   = false;
     this._perkTimer   = 0;
     this._perkChoices = new Map(); // socketId → perkId
@@ -153,9 +169,10 @@ export class GameRoom {
       x: start.x, z: start.z, angle: 0,
       hp: PLAYER_MAX_HP, ammo: WEAPONS.pistol.ammoMax,
       alive: true, reloading: false,
-      weapon: 'pistol', healthpacks: 0, grenadeCount: GRENADE_MAX, beaconCount: BEACON_STARTING,
+      weapon: 'pistol', healthpacks: 0, grenadeCount: GRENADE_STARTING, beaconCount: BEACON_STARTING,
       inSafeZone: false, ready: false, disconnected: false,
       appearance: appearance ?? { ...DEFAULT_APPEARANCE },
+      carrying: null,
       _reloadTimer: 0, _shootCd: 0, _useCd: 0,
       _dashCd: 0, _dashTime: 0, _input: {},
       downed: false, downedHp: 0, _reviveProgress: 0,
@@ -163,31 +180,77 @@ export class GameRoom {
       _perkMaxHp: PLAYER_MAX_HP, _perkReloadMult: 1.0, _perkSpeedMult: 1.0,
       _perkDamageMult: 1.0, _perkDamageTaken: 1.0, _perkDashCdBonus: 0,
     });
-    socket.emit('joined', { playerId: socket.id, slot: slotIndex, roomId: this.id, token });
+    socket.emit('joined', { playerId: socket.id, slot: slotIndex, roomId: this.id, token, appearance: this.players.get(socket.id).appearance });
     this._broadcastLobby();
     console.log(`[Room ${this.id}] +player ${name}`);
   }
 
   removePlayer(socketId) {
     const p = this.players.get(socketId);
-    if (this.gameStarted && p) {
-      // Hold slot for RECONNECT_TIMEOUT seconds
+    if (p) {
+      // Hold slot: RECONNECT_TIMEOUT in-game, LOBBY_RECONNECT_TIMEOUT in lobby
+      const timeout = this.gameStarted ? RECONNECT_TIMEOUT : LOBBY_RECONNECT_TIMEOUT;
       const cleanup = setTimeout(() => {
         this._disconnected.delete(p.token);
         this.players.delete(socketId);
-        this._checkAllDead();
-      }, RECONNECT_TIMEOUT * 1000);
+        this._readySet.delete(socketId);
+        this._votes.delete(socketId);
+        this._fogVotes.delete(socketId);
+        if (this.players.size === 0) { clearInterval(this._interval); return; }
+        if (this.gameStarted) {
+          this._checkAllDead();
+        } else {
+          this._broadcastLobby();
+          this._checkAllReady();
+        }
+      }, timeout * 1000);
       this._disconnected.set(p.token, { socketId, cleanup });
       p.disconnected = true;
       p._input = {};
+      if (!this.gameStarted) {
+        // Exclude disconnected player immediately so others can still start
+        this._broadcastLobby();
+        this._checkAllReady();
+      }
       return;
+    }
+    if (this.players.size === 0) { clearInterval(this._interval); return; }
+    if (this.gameStarted) {
+      this.io.to(this.id).emit('playerLeft', { playerId: socketId });
+    } else {
+      this._broadcastLobby();
+      this._checkAllReady();
+    }
+  }
+
+  destroy() {
+    clearInterval(this._interval);
+    for (const dc of this._disconnected.values()) clearTimeout(dc.cleanup);
+    this._disconnected.clear();
+    this.io.to(this.id).emit('roomClosed');
+    for (const socketId of this.players.keys()) {
+      const s = this.io.sockets.sockets.get(socketId);
+      if (s) s.leave(this.id);
+    }
+    this.players.clear();
+  }
+
+  permanentLeave(socketId) {
+    const p = this.players.get(socketId);
+    if (!p) return;
+    // Cancel any pending reconnect hold
+    if (p.token) {
+      const dc = this._disconnected.get(p.token);
+      if (dc) { clearTimeout(dc.cleanup); this._disconnected.delete(p.token); }
     }
     this._readySet.delete(socketId);
     this._votes.delete(socketId);
+    this._fogVotes.delete(socketId);
     this.players.delete(socketId);
     if (this.players.size === 0) { clearInterval(this._interval); return; }
     if (this.gameStarted) {
       this.io.to(this.id).emit('playerLeft', { playerId: socketId });
+      this._checkAllDead();
     } else {
       this._broadcastLobby();
       this._checkAllReady();
@@ -207,14 +270,27 @@ export class GameRoom {
     p.disconnected = false;
     this.players.set(socket.id, p);
     socket.join(this.id);
-    socket.emit('joined', { playerId: socket.id, slot: p.slot, roomId: this.id, token, reconnected: true });
+    socket.emit('joined', { playerId: socket.id, slot: p.slot, roomId: this.id, token, reconnected: true, appearance: p.appearance });
+    if (!this.gameStarted) {
+      this._broadcastLobby();
+      this._checkAllReady();
+    }
     console.log(`[Room ${this.id}] reconnect ${p.name}`);
     return true;
   }
 
   handleInput(socketId, input) {
     const p = this.players.get(socketId);
-    if (p && this.gameStarted && !p.disconnected) p._input = input;
+    if (p && this.gameStarted && !p.disconnected) {
+      const prev = p._input;
+      p._input = { ...input };
+      // One-shot events: preserve if the previous tick hasn't consumed them yet
+      if (prev.grenadeTarget && !input.grenadeTarget) p._input.grenadeTarget = prev.grenadeTarget;
+      if (prev.beacon)       p._input.beacon       = true;
+      if (prev.dash)         p._input.dash         = true;
+      if (prev.reload)       p._input.reload       = true;
+      if (prev.useHealthpack) p._input.useHealthpack = true;
+    }
   }
 
   setReady(socketId, isReady) {
@@ -232,9 +308,15 @@ export class GameRoom {
     this._broadcastLobby();
   }
 
+  setFogVote(socketId, choice) {
+    if (!this.players.has(socketId) || this.gameStarted) return;
+    if (choice === 'yes' || choice === 'no') this._fogVotes.set(socketId, choice);
+    this._broadcastLobby();
+  }
+
   setAppearance(socketId, appearance) {
     const p = this.players.get(socketId);
-    if (p && !this.gameStarted) p.appearance = appearance;
+    if (p && !this.gameStarted) { p.appearance = appearance; this._broadcastLobby(); }
   }
 
   useHealthpack(socketId) {
@@ -250,11 +332,13 @@ export class GameRoom {
 
   _broadcastLobby() {
     const active  = [...this.players.values()].filter(p => !p.disconnected);
-    const players = active.map(p => ({ id: p.id, name: p.name, slot: p.slot, ready: p.ready }));
+    const players = active.map(p => ({ id: p.id, name: p.name, slot: p.slot, ready: p.ready, outfit: p.appearance?.outfit ?? 0 }));
     const voteCounts = Object.fromEntries(MAPS.map(m => [m, 0]));
     for (const v of this._votes.values()) voteCounts[v] = (voteCounts[v] ?? 0) + 1;
+    const fogVoteCounts = { yes: 0, no: 0 };
+    for (const v of this._fogVotes.values()) fogVoteCounts[v]++;
     this.io.to(this.id).emit('lobbyState', {
-      players, readyCount: active.filter(p => p.ready).length, totalCount: active.length, voteCounts,
+      players, readyCount: active.filter(p => p.ready).length, totalCount: active.length, voteCounts, fogVoteCounts,
     });
   }
 
@@ -282,6 +366,9 @@ export class GameRoom {
       this._mapIndex = MAPS.indexOf(chosen);
       if (this._mapIndex < 0) this._mapIndex = 0;
       this.mapId = MAPS[this._mapIndex];
+      const noVotes  = [...this._fogVotes.values()].filter(v => v === 'no').length;
+      const yesVotes = this._fogVotes.size - noVotes;
+      this.fogEnabled = noVotes <= yesVotes; // ties → fog on
     }
 
     this.wave       = 1;
@@ -293,10 +380,17 @@ export class GameRoom {
     this._beacons     = [];
     this._waveTimer = -1;
     this._safeRoomOpen = false;
+    this._missionPhase   = 0;
+    this._fuelDelivered  = 0;
+    this._repairProgress = 0;
+    this._phase1Timer    = 0;
+    this._missionItems   = [];
     this._completing   = false;
     this._kills.clear();
     this._pickups.forEach(p => { p.respawnTimer = 0; });
-    this._healthpacks.forEach(h => { h.respawnTimer = 0; });
+    this._healthpacks = [];
+    this._weaponDrops = [];
+    this._grenadePicks = [];
     this._flowField = new FlowField(this.mapId);
     this._acidPuddles = [];
     this._perkPhase   = false;
@@ -314,7 +408,7 @@ export class GameRoom {
         _reloadTimer: 0, _shootCd: 0, _useCd: 0,
         _dashCd: 0, _dashTime: 0, _input: {},
         downed: false, downedHp: 0, _reviveProgress: 0,
-        pinnedBy: null, pulledBy: null,
+        pinnedBy: null, pulledBy: null, carrying: null,
         _perkMaxHp: PLAYER_MAX_HP, _perkReloadMult: 1.0, _perkSpeedMult: 1.0,
         _perkDamageMult: 1.0, _perkDamageTaken: 1.0, _perkDashCdBonus: 0,
       });
@@ -323,7 +417,8 @@ export class GameRoom {
     this.gameStarted    = true;
     this._gameStartTime = Date.now();
     this._spawnWave(this.wave);
-    this.io.to(this.id).emit('gameStart', { wave: this.wave, mapId: this.mapId, isRestart });
+    this.io.to(this.id).emit('gameStart', { wave: this.wave, mapId: this.mapId, isRestart, fogEnabled: this.fogEnabled });
+    if (this.mapId === 'city') this._initCityMissions();
     console.log(`[Room ${this.id}] START wave ${this.wave} map ${this.mapId}`);
   }
 
@@ -345,7 +440,7 @@ export class GameRoom {
         p.inSafeZone = false;
         if (!p.alive) { p.alive = true; p.hp = PLAYER_MAX_HP; }
         p.x = s.x; p.z = s.z;
-        p.grenadeCount = GRENADE_MAX;
+        p.grenadeCount = GRENADE_STARTING;
       });
 
       this._startGame(true);
@@ -358,7 +453,9 @@ export class GameRoom {
     if (!this.gameStarted || this._completing) return;
     this.tick++;
 
-    if (!this._safeRoomOpen && this._waveStart > 0 &&
+    if (this.mapId === 'city') {
+      this._updateMissions();
+    } else if (!this._safeRoomOpen && this._waveStart > 0 &&
         Date.now() - this._waveStart >= WAVE_SAFE_DELAY * 1000) {
       this._safeRoomOpen = true;
       this.io.to(this.id).emit('safeRoomOpen');
@@ -375,13 +472,24 @@ export class GameRoom {
     this._updateBullets();
     this._updateEnemies();
     this._separateCharacters();
+    // Re-eject players pushed into walls by separation
+    for (const p of this.players.values()) {
+      if (p.disconnected || p.dead || p.downed) continue;
+      if (this._blocked(p.x, p.z, PLAYER_RADIUS)) {
+        const out = this._depenetrate(p.x, p.z, PLAYER_RADIUS);
+        p.x = Math.max(-MAP_HALF, Math.min(MAP_HALF, out.x));
+        p.z = Math.max(-MAP_HALF, Math.min(MAP_HALF, out.z));
+      }
+    }
     this._updateAcidBlobs();
     this._updateGrenades();
     this._updateAcidPuddles();
     this._updateTongues();
     this._updateBeacons();
     this._updatePickups();
+    this._updateWeaponDrops();
     this._updateHealthpacks();
+    this._updateGrenadePicks();
     this._checkWave();
     this._broadcastGame();
   }
@@ -421,7 +529,7 @@ export class GameRoom {
       p._dashCd -= DT;
       p._useCd  -= DT;
 
-      const { w: fw, a, s, d, mouseAngle, shoot, reload, useHealthpack, dash, grenade, beacon } = p._input;
+      const { w: fw, a, s, d, mouseAngle, shoot, reload, useHealthpack, dash, grenadeTarget, beacon } = p._input;
 
       // Pinned by jumper — can't move or shoot
       if (p.pinnedBy) {
@@ -454,6 +562,13 @@ export class GameRoom {
       }
       if (p._dashTime > 0) p._dashTime -= DT;
 
+      // Pop player out of geometry if stuck (e.g. pushed by enemies or spawned inside)
+      if (this._blocked(p.x, p.z, PLAYER_RADIUS)) {
+        const out = this._depenetrate(p.x, p.z, PLAYER_RADIUS);
+        p.x = Math.max(-MAP_HALF, Math.min(MAP_HALF, out.x));
+        p.z = Math.max(-MAP_HALF, Math.min(MAP_HALF, out.z));
+      }
+
       // WASD movement
       if (dx !== 0 || dz !== 0) {
         const len = Math.sqrt(dx*dx + dz*dz);
@@ -477,15 +592,20 @@ export class GameRoom {
         p._useCd = 0.5;
       }
 
-      // Grenade (G)
-      if (grenade && p.grenadeCount > 0) {
-        p.grenadeCount--;
-        this._grenadeProj.push({
-          id: this._nextGrenadeId++, owner: p.id,
-          x: p.x, z: p.z,
-          dx: Math.sin(p.angle), dz: Math.cos(p.angle),
-          fuse: GRENADE_FUSE,
-        });
+      // Grenade (G) — throw to target position on release
+      if (grenadeTarget && p.grenadeCount > 0) {
+        const tdx = grenadeTarget.x - p.x, tdz = grenadeTarget.z - p.z;
+        if (tdx*tdx + tdz*tdz <= GRENADE_THROW_RANGE * GRENADE_THROW_RANGE) {
+          p.grenadeCount--;
+          const gId = this._nextGrenadeId++;
+          this._grenadeProj.push({
+            id: gId, owner: p.id,
+            x: grenadeTarget.x, z: grenadeTarget.z,
+            dx: 0, dz: 0,
+            fuse: GRENADE_LAND_FUSE,
+          });
+          this.io.to(this.id).emit('grenadeThrown', { id: gId, ox: p.x, oz: p.z, tx: grenadeTarget.x, tz: grenadeTarget.z });
+        }
       }
 
       // Beacon (F) — attract enemies
@@ -494,8 +614,14 @@ export class GameRoom {
         const bx = p.x + Math.sin(p.angle) * 4;
         const bz = p.z + Math.cos(p.angle) * 4;
         this._beacons.push({ x: bx, z: bz, timer: BEACON_DURATION });
+        this.io.to(this.id).emit('beaconThrown', { ox: p.x, oz: p.z, tx: bx, tz: bz });
         this.io.to(this.id).emit('beaconLanded', { x: bx, z: bz, duration: BEACON_DURATION, radius: BEACON_ATTRACT_RADIUS });
       }
+
+      // Clear consumed one-shots so next tick doesn't re-fire them
+      p._input.grenadeTarget = null;
+      p._input.beacon = false;
+      p._input.dash = false;
 
       // Shoot
       p._shootCd -= DT;
@@ -510,7 +636,7 @@ export class GameRoom {
             dist: 0, owner: p.id, damage: w.damage, range: w.range, speed: w.speed,
           });
         }
-        if (p.ammo === 0) { p.reloading = true; p._reloadTimer = w.reloadTime; }
+        if (p.ammo === 0) { p.reloading = true; p._reloadTimer = w.reloadTime * p._perkReloadMult; }
       }
 
       // Safe zone entry
@@ -545,6 +671,8 @@ export class GameRoom {
               this.io.to(this.id).emit('acidPuddle', { x: e.x, z: e.z, radius: ACID_PUDDLE_RADIUS, duration: ACID_PUDDLE_DURATION });
             }
             if (e.type === 'jumper') this._clearJumperPin(e.id);
+            this._trySpecialDrop(e);
+            this._tryGrenadeDrop(e);
             const n = (this._kills.get(b.owner) ?? 0) + 1;
             this._kills.set(b.owner, n);
             const killer = this.players.get(b.owner);
@@ -588,6 +716,21 @@ export class GameRoom {
       if (dist > 0.05) e.angle = Math.atan2(dx, dz);
 
       const er = ENEMY_RADII[e.type] ?? 0.4;
+
+      // Escape if pushed/spawned inside wall geometry
+      if (this._blocked(e.x, e.z, er)) {
+        e._stuckTick = (e._stuckTick ?? 0) + 1;
+        const angle = e._stuckTick * 0.618 * Math.PI * 2; // golden-ratio spiral
+        let escaped = false;
+        for (let rad = 0.4; rad <= 4.0; rad += 0.4) {
+          const ex = e.x + Math.cos(angle) * rad;
+          const ez = e.z + Math.sin(angle) * rad;
+          if (!this._blocked(ex, ez, er)) { e.x = ex; e.z = ez; escaped = true; break; }
+        }
+        if (!escaped) continue; // truly boxed in, skip this tick
+      } else {
+        e._stuckTick = 0;
+      }
 
       // Beacon redirect: if any active beacon, move toward nearest beacon instead
       let targetX = nearest.x, targetZ = nearest.z;
@@ -661,7 +804,12 @@ export class GameRoom {
           // Stay on pinned player, deal damage
           const pp = this.players.get(e._pinnedPlayer);
           if (!pp || !pp.alive || pp.downed || pp.pinnedBy !== e.id) {
-            e._pinnedPlayer = null; // target freed or died
+            // Clear pinnedBy so a revived player isn't stuck immobile
+            if (pp && pp.pinnedBy === e.id) {
+              pp.pinnedBy = null;
+              this.io.to(this.id).emit('playerUnpinned', { playerId: pp.id });
+            }
+            e._pinnedPlayer = null;
           } else {
             e.x = pp.x; e.z = pp.z;
             e._atkCd = (e._atkCd ?? 0) - DT;
@@ -698,7 +846,7 @@ export class GameRoom {
             dx: dist > 0 ? dx/dist : 0, dz: dist > 0 ? dz/dist : 0,
             dist: 0, hp: TONGUE_HP, attached: false, target: null,
           });
-          this.io.to(this.id).emit('tongueShot', { id: this._tongues[this._tongues.length-1].id, ox: e.x, oz: e.z, tx: nearest.x, tz: nearest.z });
+          this.io.to(this.id).emit('tongueShot', { id: this._tongues[this._tongues.length-1].id, ownerId: e.id, ox: e.x, oz: e.z, tx: nearest.x, tz: nearest.z });
         }
         continue;
       }
@@ -783,6 +931,8 @@ export class GameRoom {
           this.io.to(this.id).emit('acidPuddle', { x: e.x, z: e.z, radius: ACID_PUDDLE_RADIUS, duration: ACID_PUDDLE_DURATION });
         }
         if (e.type === 'jumper') this._clearJumperPin(e.id);
+        this._trySpecialDrop(e);
+        this._tryGrenadeDrop(e);
         const n = (this._kills.get(owner) ?? 0) + 1;
         this._kills.set(owner, n);
         const killer = this.players.get(owner);
@@ -790,6 +940,65 @@ export class GameRoom {
       }
       this.enemies = this.enemies.filter(e => !e.dead);
     }
+  }
+
+  // ── Weapon drops (from special kills) ────────────────────────────────────────
+
+  _trySpecialDrop(e) {
+    const weapon = SPECIAL_WEAPON_DROPS[e.type];
+    const isSpecial = SPECIAL_TYPES.includes(e.type);
+    if (!weapon && !isSpecial) return;
+    if (weapon && isSpecial) {
+      if (Math.random() < 0.5) {
+        this._weaponDrops.push({ id: `d${this._nextDropId++}`, weapon, x: e.x, z: e.z, lifetime: DROP_LIFETIME });
+      } else {
+        this._healthpacks.push({ id: `hpd${this._nextHpDropId++}`, x: e.x, z: e.z, respawnTimer: 0, isDrop: true });
+      }
+    } else if (weapon) {
+      this._weaponDrops.push({ id: `d${this._nextDropId++}`, weapon, x: e.x, z: e.z, lifetime: DROP_LIFETIME });
+    } else {
+      this._healthpacks.push({ id: `hpd${this._nextHpDropId++}`, x: e.x, z: e.z, respawnTimer: 0, isDrop: true });
+    }
+  }
+
+  _tryGrenadeDrop(e) {
+    if (Math.random() < GRENADE_DROP_CHANCE) {
+      this._grenadePicks.push({ id: `gp${this._nextGrenPickId++}`, x: e.x, z: e.z });
+    }
+  }
+
+  _updateGrenadePicks() {
+    for (const gp of this._grenadePicks) {
+      for (const p of this.players.values()) {
+        if (!p.alive || p.inSafeZone || p.grenadeCount >= GRENADE_MAX) continue;
+        const dx = p.x - gp.x, dz = p.z - gp.z;
+        if (dx*dx + dz*dz < GRENADE_PICKUP_RADIUS * GRENADE_PICKUP_RADIUS) {
+          p.grenadeCount++;
+          gp.dead = true;
+          this.io.to(this.id).emit('grenadePickup', { playerId: p.id, pickupId: gp.id, count: p.grenadeCount });
+          break;
+        }
+      }
+    }
+    this._grenadePicks = this._grenadePicks.filter(g => !g.dead);
+  }
+
+  _updateWeaponDrops() {
+    for (const d of this._weaponDrops) {
+      d.lifetime -= DT;
+      if (d.lifetime <= 0) continue;
+      for (const p of this.players.values()) {
+        if (!p.alive || p.inSafeZone || p.weapon === d.weapon) continue;
+        const dx = p.x - d.x, dz = p.z - d.z;
+        if (dx*dx + dz*dz < WEAPON_PICKUP_RADIUS * WEAPON_PICKUP_RADIUS) {
+          p.weapon = d.weapon; p.ammo = WEAPONS[d.weapon].ammoMax; p.reloading = false;
+          d.lifetime = 0;
+          this.io.to(this.id).emit('weaponPickup', { playerId: p.id, weapon: d.weapon, pickupId: d.id });
+          break;
+        }
+      }
+    }
+    this._weaponDrops = this._weaponDrops.filter(d => d.lifetime > 0);
   }
 
   // ── Pickups ─────────────────────────────────────────────────────────────────
@@ -812,18 +1021,18 @@ export class GameRoom {
 
   _updateHealthpacks() {
     for (const hp of this._healthpacks) {
-      if (hp.respawnTimer > 0) { hp.respawnTimer -= DT; continue; }
       for (const p of this.players.values()) {
         if (!p.alive || p.inSafeZone || p.healthpacks >= PLAYER_MAX_HEALTHPACKS) continue;
         const dx = p.x-hp.x, dz = p.z-hp.z;
         if (dx*dx+dz*dz < HEALTHPACK_PICKUP_RADIUS*HEALTHPACK_PICKUP_RADIUS) {
           p.healthpacks++;
-          hp.respawnTimer = HEALTHPACK_RESPAWN_TIME;
+          hp.dead = true;
           this.io.to(this.id).emit('healthpackPickup', { playerId: p.id, pickupId: hp.id, count: p.healthpacks });
           break;
         }
       }
     }
+    this._healthpacks = this._healthpacks.filter(h => !h.dead);
   }
 
   // ── Tongue (smoker) ──────────────────────────────────────────────────────────
@@ -842,7 +1051,7 @@ export class GameRoom {
         const sd = Math.sqrt(sdx*sdx + sdz*sdz);
         if (sd < 1.2) {
           // Reached smoker — deal damage and release
-          target.hp = Math.max(0, target.hp - 15 * target._perkDamageTaken);
+          target.hp = Math.max(0, target.hp - TONGUE_REACH_DAMAGE * target._perkDamageTaken);
           if (target.hp === 0) _downPlayer(target, this);
           target.pulledBy = null; t.dead = true;
         } else {
@@ -856,7 +1065,7 @@ export class GameRoom {
           const rdx = r.x - target.x, rdz = r.z - target.z;
           if (rdx*rdx + rdz*rdz < JUMPER_RESCUE_RANGE * JUMPER_RESCUE_RANGE) {
             target.pulledBy = null; t.dead = true;
-            this.io.to(this.id).emit('tongueRescued', { playerId: target.id, rescuedBy: r.id });
+            this.io.to(this.id).emit('tongueRescued', { tongueId: t.id, playerId: target.id, rescuedBy: r.id });
             break;
           }
         }
@@ -948,28 +1157,47 @@ export class GameRoom {
     this.io.to(this.id).emit('waveClear', { nextWave: this.wave + 1, delay: NEXT_WAVE_DELAY });
   }
 
+  _validEnemySpawn(sp, r = 0.5) {
+    for (let i = 0; i < 30; i++) {
+      const x = sp.x + (Math.random() - 0.5) * 6;
+      const z = sp.z + (Math.random() - 0.5) * 6;
+      if (!this._blocked(x, z, r)) return { x, z };
+    }
+    return { x: sp.x, z: sp.z };
+  }
+
   _spawnWave(n) {
     const count = Math.min(WAVE_BASE + (n-1)*WAVE_SCALE, MAX_ENEMIES);
     const comp  = WAVE_COMPOSITIONS[Math.min(n-1, WAVE_COMPOSITIONS.length-1)];
     for (let i = 0; i < count; i++) {
       const sp   = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
       const type = _weightedRandom(comp);
-      this.enemies.push({ id: this._nextEnemyId++, x: sp.x+(Math.random()-.5)*6, z: sp.z+(Math.random()-.5)*6, angle: 0, hp: ENEMY_TYPES[type].hp, dead: false, type, _atkCd: 0 });
+      const pos  = this._validEnemySpawn(sp, ENEMY_RADII[type] ?? 0.4);
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: ENEMY_TYPES[type].hp, dead: false, type, _atkCd: 0 });
+    }
+    const specialCount = Math.min(n, MAX_SPECIALS_PER_WAVE);
+    for (let i = 0; i < specialCount; i++) {
+      const sp   = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
+      const type = SPECIAL_TYPES[Math.floor(Math.random()*SPECIAL_TYPES.length)];
+      const pos  = this._validEnemySpawn(sp, ENEMY_RADII[type] ?? 0.4);
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: ENEMY_TYPES[type].hp, dead: false, type, _atkCd: 0 });
     }
     if (n % 5 === 0 && n < FINAL_BOSS_WAVE) {
-      const sp = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
-      this.enemies.push({ id: this._nextEnemyId++, x: sp.x, z: sp.z, angle: 0, hp: ENEMY_TYPES.boss.hp, dead: false, type: 'boss', _atkCd: 0, _slamCd: BOSS_SLAM_CD });
+      const sp  = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
+      const pos = this._validEnemySpawn(sp, ENEMY_RADII.boss ?? 0.4);
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: ENEMY_TYPES.boss.hp, dead: false, type: 'boss', _atkCd: 0, _slamCd: BOSS_SLAM_CD });
       this.io.to(this.id).emit('bossSpawn', { wave: n, final: false });
     }
     if (n >= FINAL_BOSS_WAVE) {
-      const sp = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
-      this.enemies.push({ id: this._nextEnemyId++, x: sp.x, z: sp.z, angle: 0, hp: ENEMY_TYPES.finalboss.hp, dead: false, type: 'finalboss', _atkCd: 0, _slamCd: FINAL_BOSS_SLAM_CD });
+      const sp  = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
+      const pos = this._validEnemySpawn(sp, ENEMY_RADII.finalboss ?? 0.4);
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: ENEMY_TYPES.finalboss.hp, dead: false, type: 'finalboss', _atkCd: 0, _slamCd: FINAL_BOSS_SLAM_CD });
       this.io.to(this.id).emit('bossSpawn', { wave: n, final: true });
     }
-    // Replenish grenades + beacons each wave
-    this.players.forEach(p => { if (p.alive) { p.grenadeCount = GRENADE_MAX; p.beaconCount = BEACON_MAX; } });
-    this._waveStart    = Date.now();
-    this._safeRoomOpen = false;
+    // Replenish beacons each wave (include downed players so they have them on revive)
+    this.players.forEach(p => { if (!p.disconnected) { p.beaconCount = BEACON_MAX; } });
+    this._waveStart = Date.now();
+    if (this._missionPhase < 4) this._safeRoomOpen = false;
     console.log(`[Room ${this.id}] wave ${n} → ${this.enemies.length} enemies`);
   }
 
@@ -1033,6 +1261,40 @@ export class GameRoom {
 
   // ── Collision ───────────────────────────────────────────────────────────────
 
+  _depenetrate(x, z, r) {
+    const col = MAP_COLLIDERS[this.mapId];
+    if (!col) return { x, z };
+    for (const b of col.boxes) {
+      const cx = Math.max(b.x - b.hw, Math.min(b.x + b.hw, x));
+      const cz = Math.max(b.z - b.hd, Math.min(b.z + b.hd, z));
+      const dx = x - cx, dz = z - cz;
+      const d2 = dx*dx + dz*dz;
+      if (d2 >= r*r) continue;
+      if (d2 > 1e-6) {
+        const d = Math.sqrt(d2);
+        return { x: cx + (dx/d)*r*1.02, z: cz + (dz/d)*r*1.02 };
+      }
+      // Player center inside box — eject through nearest face
+      const dL = x - (b.x - b.hw), dR = (b.x + b.hw) - x;
+      const dF = z - (b.z - b.hd), dB = (b.z + b.hd) - z;
+      const m = Math.min(dL, dR, dF, dB);
+      if (m === dL) return { x: b.x - b.hw - r - 0.02, z };
+      if (m === dR) return { x: b.x + b.hw + r + 0.02, z };
+      if (m === dF) return { x, z: b.z - b.hd - r - 0.02 };
+      return { x, z: b.z + b.hd + r + 0.02 };
+    }
+    for (const c of col.circles) {
+      const dx = x - c.x, dz = z - c.z;
+      const d2 = dx*dx + dz*dz;
+      const m = r + c.r;
+      if (d2 >= m*m) continue;
+      const d = Math.sqrt(d2);
+      if (d > 1e-6) return { x: c.x + (dx/d)*m*1.02, z: c.z + (dz/d)*m*1.02 };
+      return { x: x + m + 0.02, z };
+    }
+    return { x, z };
+  }
+
   _blocked(x, z, r) {
     const col = MAP_COLLIDERS[this.mapId];
     if (!col) return false;
@@ -1069,6 +1331,139 @@ export class GameRoom {
       }
   }
 
+  // ── City missions ────────────────────────────────────────────────────────────
+
+  _initCityMissions() {
+    this._missionPhase   = 0;
+    this._fuelDelivered  = 0;
+    this._repairProgress = 0;
+    this._phase1Timer    = 0;
+    this._missionItems   = [
+      ...CITY_FUEL_POSITIONS.map(p => ({ ...p, type: 'fuel',      pickedUp: false })),
+      { ...CITY_REPAIR_KIT_POS, type: 'repairKit', pickedUp: false },
+    ];
+    this.io.to(this.id).emit('missionUpdate', {
+      phase: 0, label: 'Collect fuel canisters (0/2)',
+      items: this._missionItems.filter(i => i.type === 'fuel'),
+      carPos: CITY_MISSION_CAR,
+    });
+  }
+
+  _visibleMissionItems() {
+    if (this._missionPhase < 2)  return this._missionItems.filter(i => i.type === 'fuel'      && !i.pickedUp);
+    if (this._missionPhase === 2) return this._missionItems.filter(i => i.type === 'repairKit' && !i.pickedUp);
+    return [];
+  }
+
+  _dropCarrying(p) {
+    if (!p.carrying) return;
+    const type = p.carrying;
+    p.carrying = null;
+    if (type === 'fuel') {
+      const item = this._missionItems.find(i => i.type === 'fuel' && i.pickedUp);
+      if (item) { item.pickedUp = false; item.x = p.x; item.z = p.z; this.io.to(this.id).emit('missionItemDropped', { itemId: item.id, x: item.x, z: item.z }); }
+    } else if (type === 'repairKit') {
+      const item = this._missionItems.find(i => i.type === 'repairKit');
+      if (item) { item.pickedUp = false; item.x = p.x; item.z = p.z; this.io.to(this.id).emit('missionItemDropped', { itemId: item.id, x: item.x, z: item.z }); }
+      if (this._missionPhase >= 3) {
+        this._missionPhase = 2;
+        this.io.to(this.id).emit('missionUpdate', { phase: 2, label: 'Repair kit dropped! Pick it back up.', items: [item], carPos: CITY_MISSION_CAR });
+      }
+    }
+  }
+
+  _spawnDefendHorde() {
+    for (let i = 0; i < MISSION_DEFEND_COUNT; i++) {
+      const sp   = SPAWN_POINTS[Math.floor(Math.random() * SPAWN_POINTS.length)];
+      const type = Math.random() < 0.65 ? 'walker' : 'runner';
+      const pos  = this._validEnemySpawn(sp, ENEMY_RADII[type] ?? 0.4);
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: ENEMY_TYPES[type].hp, dead: false, type, _atkCd: 0 });
+    }
+    this.io.to(this.id).emit('defendHorde');
+  }
+
+  _updateMissions() {
+    if (this._missionPhase >= 4) return;
+
+    // Drop items if carrier is downed, dead, or disconnected
+    for (const p of this.players.values()) {
+      if (p.carrying && (!p.alive || p.downed || p.disconnected)) this._dropCarrying(p);
+    }
+
+    const players = [...this.players.values()].filter(p => p.alive && !p.downed && !p.inSafeZone && !p.disconnected);
+
+    if (this._missionPhase === 0) {
+      for (const p of players) {
+        if (p.carrying) continue;
+        for (const item of this._missionItems) {
+          if (item.type !== 'fuel' || item.pickedUp) continue;
+          const dx = p.x - item.x, dz = p.z - item.z;
+          if (dx*dx + dz*dz < MISSION_PICKUP_RADIUS * MISSION_PICKUP_RADIUS) {
+            item.pickedUp = true; p.carrying = 'fuel';
+            this.io.to(this.id).emit('missionItemPickup', { itemId: item.id, playerId: p.id });
+            break;
+          }
+        }
+      }
+      for (const p of players) {
+        if (p.carrying !== 'fuel') continue;
+        const dx = p.x - CITY_MISSION_CAR.x, dz = p.z - CITY_MISSION_CAR.z;
+        if (dx*dx + dz*dz < MISSION_DELIVER_RADIUS * MISSION_DELIVER_RADIUS) {
+          p.carrying = null;
+          this._fuelDelivered++;
+          if (this._fuelDelivered >= 2) {
+            this._missionPhase = 1;
+            this._phase1Timer  = 3.5;
+            this.io.to(this.id).emit('missionUpdate', { phase: 1, label: 'Fuel loaded! Trying to start the engine...' });
+          } else {
+            this.io.to(this.id).emit('missionUpdate', {
+              phase: 0, label: `Fuel delivered (${this._fuelDelivered}/2) — find more fuel!`,
+              items: this._visibleMissionItems(), carPos: CITY_MISSION_CAR,
+            });
+          }
+        }
+      }
+    } else if (this._missionPhase === 1) {
+      this._phase1Timer -= DT;
+      if (this._phase1Timer <= 0) {
+        this._missionPhase = 2;
+        const rkit = this._missionItems.find(i => i.type === 'repairKit');
+        this.io.to(this.id).emit('missionUpdate', { phase: 2, label: 'Engine broken! Find the repair kit.', items: [rkit], carPos: CITY_MISSION_CAR });
+      }
+    } else if (this._missionPhase === 2) {
+      const rkit = this._missionItems.find(i => i.type === 'repairKit');
+      if (!rkit || rkit.pickedUp) return;
+      for (const p of players) {
+        if (p.carrying) continue;
+        const dx = p.x - rkit.x, dz = p.z - rkit.z;
+        if (dx*dx + dz*dz < MISSION_PICKUP_RADIUS * MISSION_PICKUP_RADIUS) {
+          rkit.pickedUp = true; p.carrying = 'repairKit';
+          this._missionPhase = 3;
+          this._spawnDefendHorde();
+          this.io.to(this.id).emit('missionItemPickup', { itemId: rkit.id, playerId: p.id });
+          this.io.to(this.id).emit('missionUpdate', { phase: 3, label: 'Repair the engine! Defend the mechanic!', carPos: CITY_MISSION_CAR });
+          break;
+        }
+      }
+    } else if (this._missionPhase === 3) {
+      const repairer = [...this.players.values()].find(p => p.carrying === 'repairKit' && p.alive && !p.downed);
+      if (!repairer) return;
+      const dx = repairer.x - CITY_MISSION_CAR.x, dz = repairer.z - CITY_MISSION_CAR.z;
+      if (dx*dx + dz*dz < MISSION_DELIVER_RADIUS * MISSION_DELIVER_RADIUS) {
+        this._repairProgress = Math.min(1, this._repairProgress + DT / MISSION_REPAIR_TIME);
+        if (this._repairProgress >= 1) {
+          repairer.carrying = null;
+          this._missionPhase = 4;
+          this._safeRoomOpen = true;
+          this.io.to(this.id).emit('missionUpdate', { phase: 4, label: 'Car repaired! Run to the safe house!' });
+          this.io.to(this.id).emit('safeRoomOpen');
+        }
+      } else {
+        this._repairProgress = Math.max(0, this._repairProgress - DT / MISSION_REPAIR_TIME * 0.5);
+      }
+    }
+  }
+
   // ── Broadcast ───────────────────────────────────────────────────────────────
 
   _broadcastGame() {
@@ -1088,17 +1483,29 @@ export class GameRoom {
         downed: p.downed, downedHp: p.downedHp,
         reviveProgress: p._reviveProgress,
         pinnedBy: p.pinnedBy, pulledBy: p.pulledBy,
+        carrying: p.carrying ?? null,
       })),
       enemies:    this.enemies.map(e => ({ id: e.id, x: e.x, z: e.z, angle: e.angle, hp: e.hp, type: e.type })),
       bullets:    this.bullets.map(b => ({ id: b.id, x: b.x, z: b.z })),
       acidBlobs:  this.acidBlobs.map(b => ({ id: b.id, x: b.x, z: b.z })),
-      grenades:   this._grenadeProj.map(g => ({ id: g.id, x: g.x, z: g.z })),
-      pickups:    this._pickups.map(p => ({ id: p.id, weapon: p.weapon, x: p.x, z: p.z, active: p.respawnTimer <= 0 })),
-      healthpacks: this._healthpacks.map(h => ({ id: h.id, x: h.x, z: h.z, active: h.respawnTimer <= 0 })),
+      grenades:     this._grenadeProj.map(g => ({ id: g.id, x: g.x, z: g.z })),
+      grenadePicks: this._grenadePicks.map(g => ({ id: g.id, x: g.x, z: g.z })),
+      pickups:    [
+        ...this._pickups.map(p => ({ id: p.id, weapon: p.weapon, x: p.x, z: p.z, active: p.respawnTimer <= 0 })),
+        ...this._weaponDrops.map(d => ({ id: d.id, weapon: d.weapon, x: d.x, z: d.z, active: true })),
+      ],
+      healthpacks: this._healthpacks.map(h => ({ id: h.id, x: h.x, z: h.z, active: true })),
       acidPuddles: this._acidPuddles.map(a => ({ x: a.x, z: a.z, radius: ACID_PUDDLE_RADIUS, timer: a.timer })),
       tongues:    this._tongues.map(t => ({ id: t.id, x: t.x, z: t.z, attached: t.attached })),
       beacons:    this._beacons.map(b => ({ x: b.x, z: b.z, timer: b.timer })),
       perkPhase: this._perkPhase,
+      mission: this.mapId === 'city' ? {
+        phase:          this._missionPhase,
+        fuelDelivered:  this._fuelDelivered,
+        repairProgress: this._repairProgress,
+        items:          this._visibleMissionItems(),
+        carPos:         CITY_MISSION_CAR,
+      } : null,
     });
   }
 }
@@ -1107,6 +1514,7 @@ export class GameRoom {
 
 function _downPlayer(p, room) {
   if (p.downed) return; // already downed
+  if (p.carrying && room.mapId === 'city') room._dropCarrying(p);
   p.alive  = false;
   p.downed = true;
   p.downedHp = DOWNED_MAX_HP;

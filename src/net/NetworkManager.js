@@ -61,9 +61,9 @@ export class NetworkManager {
     this.socket?.emit('tryReconnect', { token, roomId });
   }
 
-  sendInput(keys, mouseAngle, shoot, reload, useHealthpack, dash, grenade, beacon) {
+  sendInput(keys, mouseAngle, shoot, reload, useHealthpack, dash, grenadeTarget, beacon) {
     if (!this.connected || !this.playerId) return;
-    this.socket.emit('input', { ...keys, mouseAngle, shoot, reload, useHealthpack, dash, grenade, beacon });
+    this.socket.emit('input', { ...keys, mouseAngle, shoot, reload, useHealthpack, dash, grenadeTarget, beacon });
   }
 
   disconnect() {

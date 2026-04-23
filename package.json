@@ -7,7 +7,8 @@
     "server":  "node server/index.js",
     "client":  "vite",
     "build":   "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "claude": "claude --model sonnet --dangerously-skip-permissions"
   },
   "dependencies": {
     "three":            "^0.170.0",

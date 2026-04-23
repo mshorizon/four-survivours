@@ -16,18 +16,32 @@ function makeZombieVoxel(palette) {
   const hMat  = new THREE.MeshLambertMaterial({ color: palette.head, emissive: palette.head, emissiveIntensity: 0.1 });
   const pMat  = new THREE.MeshLambertMaterial({ color: 0x556644 });
 
-  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.42, 0.21), pMat);
-  legL.position.set(-0.12, 0.21, 0);
-  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.42, 0.21), pMat);
-  legR.position.set( 0.12, 0.21, 0);
+  // Legs — pentagonal low-poly cylinders, slightly bowed
+  const legGeo = new THREE.CylinderGeometry(0.085, 0.105, 0.42, 5);
+  const legL = new THREE.Mesh(legGeo, pMat); legL.position.set(-0.12, 0.21, 0.03);
+  const legR = new THREE.Mesh(legGeo, pMat); legR.position.set( 0.12, 0.21, 0.03);
 
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.52, 0.30), bMat);
+  // Body — hunched (top narrower than bottom), 5-sided
+  const bodyGeo = new THREE.CylinderGeometry(0.20, 0.25, 0.52, 5);
+  const body    = new THREE.Mesh(bodyGeo, bMat);
   body.position.y = 0.42 + 0.26;
+  body.rotation.x = 0.18; // hunched forward
 
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.44, 0.44), hMat);
-  head.position.y = 0.42 + 0.52 + 0.24;
+  // Arms — long drooping zombie arms, angled outward-down
+  const armGeo = new THREE.CylinderGeometry(0.065, 0.075, 0.48, 5);
+  const armL   = new THREE.Mesh(armGeo, bMat);
+  armL.position.set(-0.32, 0.42 + 0.26, 0);
+  armL.rotation.z =  0.55; // droop left
+  const armR   = new THREE.Mesh(armGeo, bMat);
+  armR.position.set( 0.32, 0.42 + 0.26, 0);
+  armR.rotation.z = -0.55; // droop right
 
-  [legL, legR, body, head].forEach(m => { m.castShadow = true; group.add(m); });
+  // Head — very low-poly sphere (angular zombie look)
+  const headGeo = new THREE.SphereGeometry(0.23, 5, 4);
+  const head    = new THREE.Mesh(headGeo, hMat);
+  head.position.y = 0.42 + 0.52 + 0.25;
+
+  [legL, legR, body, armL, armR, head].forEach(m => { m.castShadow = true; group.add(m); });
   return group;
 }
 

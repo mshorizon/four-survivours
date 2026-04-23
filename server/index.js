@@ -13,6 +13,8 @@ const app = express();
 const httpServer = createServer(app);
 const isProd = process.env.NODE_ENV === 'production';
 const io = new Server(httpServer, {
+  pingTimeout:  5000,
+  pingInterval: 5000,
   cors: isProd
     ? { origin: process.env.CLIENT_ORIGIN || false }
     : { origin: '*', methods: ['GET', 'POST'] },
@@ -29,6 +31,22 @@ app.get('/api/rooms', (_req, res) => {
       list.push({ id, playerCount: room.size, gameStarted: room.gameStarted, wave: room.wave });
   }
   res.json(list);
+});
+
+app.delete('/api/rooms/:id', (req, res) => {
+  const room = rooms.get(req.params.id);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+  room.destroy();
+  rooms.delete(req.params.id);
+  res.json({ ok: true });
+});
+
+app.delete('/api/rooms', (_req, res) => {
+  for (const [id, room] of rooms) {
+    room.destroy();
+    rooms.delete(id);
+  }
+  res.json({ ok: true });
 });
 
 app.get('*', (_req, res) =>
@@ -66,7 +84,8 @@ io.on('connection', (socket) => {
     }
 
     const slotIndex = _nextSlot(room);
-    room.addPlayer(socket, name || 'Survivor', slotIndex, appearance ?? null);
+    const resolvedAppearance = _resolveAppearance(room, appearance);
+    room.addPlayer(socket, name || `Player_${slotIndex + 1}`, slotIndex, resolvedAppearance);
     io.to(id).emit('roomInfo', { roomId: id, playerCount: room.size });
   });
 
@@ -90,6 +109,11 @@ io.on('connection', (socket) => {
     if (room) room.setMapVote(socket.id, mapId);
   });
 
+  socket.on('fogVote', (choice) => {
+    const room = getRoomOf(socket.id);
+    if (room) room.setFogVote(socket.id, choice);
+  });
+
   socket.on('useHealthpack', () => {
     const room = getRoomOf(socket.id);
     if (room) room.useHealthpack(socket.id);
@@ -106,6 +130,15 @@ io.on('connection', (socket) => {
     if (!room || !room.tryReconnect(socket, token)) {
       // Reconnect failed — treat as fresh join
       socket.emit('reconnectFailed');
+    }
+  });
+
+  socket.on('leaveRoom', () => {
+    const room = getRoomOf(socket.id);
+    if (room) {
+      room.permanentLeave(socket.id);
+      if (room.size === 0) rooms.delete(room.id);
+      else io.to(room.id).emit('roomInfo', { roomId: room.id, playerCount: room.size });
     }
   });
 
@@ -134,6 +167,17 @@ function _nextSlot(room) {
     if (!used.has(i)) return i;
   }
   return 0;
+}
+
+function _resolveAppearance(room, appearance) {
+  const base = appearance ? { ...appearance } : { skin: 0, outfit: 0, hat: 'cap' };
+  const usedOutfits = new Set([...room.players.values()].map(p => p.appearance?.outfit ?? 0));
+  if (usedOutfits.has(base.outfit)) {
+    for (let i = 0; i < 8; i++) {
+      if (!usedOutfits.has(i)) { base.outfit = i; break; }
+    }
+  }
+  return base;
 }
 
 httpServer.listen(PORT, () => {

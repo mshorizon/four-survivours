@@ -5,44 +5,52 @@ import {
   AMMO_MAX, RELOAD_TIME, MAP_HALF
 } from './constants.js';
 
-// Voxel character: head box + body box (matches reference image style)
 function makeVoxelCharacter(bodyColor, headColor = 0xf5c59a) {
   const group = new THREE.Group();
 
-  const bodyMat = new THREE.MeshLambertMaterial({ color: bodyColor, emissive: bodyColor, emissiveIntensity: 0.15 });
-  const headMat = new THREE.MeshLambertMaterial({ color: headColor });
-  const skinMat = new THREE.MeshLambertMaterial({ color: 0xf5c59a, emissive: 0xf5c59a, emissiveIntensity: 0.1 });
-  const pantMat = new THREE.MeshLambertMaterial({ color: 0x4466aa });
+  const bodyMat = new THREE.MeshLambertMaterial({ color: bodyColor, emissive: bodyColor, emissiveIntensity: 0.8 });
+  const skinMat = new THREE.MeshLambertMaterial({ color: 0xf5c59a, emissive: 0xf5c59a, emissiveIntensity: 0.7 });
+  const pantMat = new THREE.MeshLambertMaterial({ color: 0x4466aa, emissive: 0x4466aa, emissiveIntensity: 0.6 });
 
-  // Legs
-  const legGeo = new THREE.BoxGeometry(0.2, 0.45, 0.22);
+  // Legs — pentagonal low-poly cylinders
+  const legGeo = new THREE.CylinderGeometry(0.09, 0.11, 0.45, 5);
   const legL = new THREE.Mesh(legGeo, pantMat); legL.position.set(-0.13, 0.225, 0);
   const legR = new THREE.Mesh(legGeo, pantMat); legR.position.set( 0.13, 0.225, 0);
 
-  // Body/torso
-  const bodyGeo = new THREE.BoxGeometry(0.52, 0.55, 0.32);
+  // Body — tapered hex cylinder (wider at shoulders)
+  const bodyGeo = new THREE.CylinderGeometry(0.27, 0.22, 0.55, 6);
   const body    = new THREE.Mesh(bodyGeo, bodyMat);
   body.position.y = 0.45 + 0.275;
 
-  // Head
-  const headGeo = new THREE.BoxGeometry(0.48, 0.48, 0.48);
+  // Arms — thin cylinders at sides
+  const armGeo = new THREE.CylinderGeometry(0.065, 0.08, 0.40, 5);
+  const armL = new THREE.Mesh(armGeo, skinMat); armL.position.set(-0.36, 0.45 + 0.275, 0);
+  const armR = new THREE.Mesh(armGeo, skinMat); armR.position.set( 0.36, 0.45 + 0.275, 0);
+
+  // Head — low-poly sphere
+  const headGeo = new THREE.SphereGeometry(0.25, 6, 5);
   const head    = new THREE.Mesh(headGeo, skinMat);
-  head.position.y = 0.45 + 0.55 + 0.26;
+  head.position.y = 0.45 + 0.55 + 0.27;
 
-  // Cap/hat (player body color)
-  const capGeo = new THREE.BoxGeometry(0.50, 0.14, 0.50);
+  // Cap — hex cylinder on top of head
+  const capGeo = new THREE.CylinderGeometry(0.21, 0.26, 0.15, 6);
   const cap    = new THREE.Mesh(capGeo, bodyMat);
-  cap.position.y = 0.45 + 0.55 + 0.52 + 0.08;
+  cap.position.y = 0.45 + 0.55 + 0.27 + 0.25 + 0.075;
 
-  // Cap brim
-  const brimGeo = new THREE.BoxGeometry(0.62, 0.06, 0.32);
+  // Cap brim — flat box protruding forward
+  const brimGeo = new THREE.BoxGeometry(0.56, 0.05, 0.28);
   const brim    = new THREE.Mesh(brimGeo, bodyMat);
-  brim.position.set(0, 0.45 + 0.55 + 0.50, 0.22);
+  brim.position.set(0, 0.45 + 0.55 + 0.27 + 0.18, 0.20);
 
-  [legL, legR, body, head, cap, brim].forEach(m => {
+  [legL, legR, body, armL, armR, head, cap, brim].forEach(m => {
     m.castShadow = true;
     group.add(m);
   });
+
+  group.legL = legL;
+  group.legR = legR;
+  group.armL = armL;
+  group.armR = armR;
 
   return group;
 }
@@ -62,6 +70,8 @@ export class Player {
     this._scene       = scene;
     this._shootTimer  = 0;
     this._reloading   = false;
+    this._walkTime    = 0;
+    this._recoilTimer = 0;
     this._reloadTimer = 0;
     this.onReloadProgress = null; // callback(0..1)
 
@@ -97,11 +107,20 @@ export class Player {
     if (input.isDown('KeyS') || input.isDown('ArrowDown'))  dz += 1;
     if (input.isDown('KeyA') || input.isDown('ArrowLeft'))  dx -= 1;
     if (input.isDown('KeyD') || input.isDown('ArrowRight')) dx += 1;
-    if (dx !== 0 || dz !== 0) {
+    const moving = dx !== 0 || dz !== 0;
+    if (moving) {
       const len = Math.sqrt(dx * dx + dz * dz);
       this.group.position.x = Math.max(-MAP_HALF, Math.min(MAP_HALF, this.group.position.x + (dx / len) * PLAYER_SPEED * dt));
       this.group.position.z = Math.max(-MAP_HALF, Math.min(MAP_HALF, this.group.position.z + (dz / len) * PLAYER_SPEED * dt));
+      this._walkTime += dt * 9;
+    } else {
+      this._walkTime *= 0.85;
     }
+    const ws = Math.sin(this._walkTime);
+    this.group.legL.rotation.x =  ws * 0.5;
+    this.group.legR.rotation.x = -ws * 0.5;
+    this.group.armL.rotation.x = -ws * 0.35;
+    this.group.armR.rotation.x =  ws * 0.35;
 
     // ── Aim ──
     const worldTarget = this.getAimDirection(camera, input.mouseX, input.mouseY);
@@ -128,8 +147,10 @@ export class Player {
 
     // ── Shoot ──
     this._shootTimer -= dt;
+    this._recoilTimer = Math.max(0, this._recoilTimer - dt);
     if (input.lmb && !this._reloading && this._shootTimer <= 0 && this.ammo > 0) {
       this._shootTimer = FIRE_RATE;
+      this._recoilTimer = 0.12;
       this.ammo--;
       this._shoot(aimDx, aimDz);
       if (this.ammo === 0) {
@@ -137,6 +158,10 @@ export class Player {
         this._reloadTimer = 0;
       }
     }
+    // recoil: both arms kick back
+    const recoilAngle = (this._recoilTimer / 0.12) * 0.7;
+    this.group.armR.rotation.x -= recoilAngle;
+    this.group.armL.rotation.x -= recoilAngle;
 
     // ── Bullet update ──
     this._flash.intensity *= 0.75; // decay flash

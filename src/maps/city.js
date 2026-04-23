@@ -49,7 +49,7 @@ export function buildCity(scene) {
   _addCar(scene,  8.5,  6.5, Math.PI/2, 0xdddddd);
   _addCar(scene, -9.0,  5.0, -0.25, 0xaa2222);
 
-  const fire1 = new THREE.PointLight(0xff6600, 3, 7);
+  const fire1 = new THREE.PointLight(0xff6600, 40, 8);
   fire1.position.set(-9,1.8,5); scene.add(fire1); fireLights.push(fire1);
 
   _addSafeHouse(scene);
@@ -61,8 +61,10 @@ export function buildCity(scene) {
     pole.position.set(x,2,z); scene.add(pole);
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.4), lampM);
     head.position.set(x,4.1,z); scene.add(head);
-    const pt = new THREE.PointLight(0xffeecc,0.8,9);
-    pt.position.set(x,4,z); scene.add(pt);
+    const pt = new THREE.SpotLight(0xffeecc, 80, 14, Math.PI / 3.5, 0.45, 2);
+    pt.position.set(x, 4, z);
+    pt.target.position.set(x, 0, z);
+    scene.add(pt); scene.add(pt.target);
   });
 
   return { fireLights, fogColor: 0x3a3a4e, fogNear: 35, fogFar: 90 };
@@ -92,7 +94,7 @@ function _addSafeHouse(scene) {
   body.position.set(0,1.75,-20); body.castShadow = true; scene.add(body);
   const door = new THREE.Mesh(new THREE.BoxGeometry(1.2,2.2,0.12), new THREE.MeshLambertMaterial({ color: 0x1a3a1a }));
   door.position.set(0,1.1,-18.06); scene.add(door);
-  const sl = new THREE.PointLight(0x44ff88,1.5,8); sl.position.set(0,2,-19); scene.add(sl);
+  const sl = new THREE.PointLight(0x44ff88, 30, 10); sl.position.set(0, 2, -19); scene.add(sl);
   const sign = new THREE.Mesh(new THREE.BoxGeometry(3,0.4,0.1), new THREE.MeshLambertMaterial({ color: 0x22ee55, emissive: 0x22ee55, emissiveIntensity: 0.5 }));
   sign.position.set(0,3.7,-18.0); scene.add(sign);
 }

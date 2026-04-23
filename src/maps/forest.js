@@ -63,6 +63,23 @@ export function buildForest(scene) {
   const ember = new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.3,0.3,6), emberMat);
   ember.position.set(3,0.15,3); scene.add(ember);
 
+  // Lamp posts along the two dirt paths
+  const lampPoleM = new THREE.MeshLambertMaterial({ color: 0x7a4820 });
+  const lampHeadM = new THREE.MeshLambertMaterial({ color: 0xffcc66, emissive: 0xffaa00, emissiveIntensity: 0.6 });
+  [
+    [-14, 0], [-7, 0], [7, 0], [14, 0],   // x-axis path
+    [0, -14], [0, -7], [0,  7], [0,  14], // z-axis path
+  ].forEach(([x, z]) => {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.13, 3.5, 7), lampPoleM);
+    pole.position.set(x, 1.75, z); pole.castShadow = true; scene.add(pole);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.20, 0.35), lampHeadM);
+    head.position.set(x, 3.6, z); scene.add(head);
+    const sl = new THREE.SpotLight(0xffcc88, 60, 12, Math.PI / 3.5, 0.5, 2);
+    sl.position.set(x, 3.5, z);
+    sl.target.position.set(x, 0, z);
+    scene.add(sl); scene.add(sl.target);
+  });
+
   // Cabin safe house
   const wallMat = new THREE.MeshLambertMaterial({ color: 0x7a5230 });
   const roofMat = new THREE.MeshLambertMaterial({ color: 0x5a3a18 });

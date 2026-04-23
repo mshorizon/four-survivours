@@ -29,20 +29,23 @@ export const WEAPONS = {
   sniper:  { ammoMax:  5, reloadTime: 3.2, fireRate: 1.6,  damage: 150, speed: 40, range: 50, pellets: 1, spread: 0    },
 };
 
-export const WEAPON_PICKUPS = [
-  { id: 'w0', weapon: 'shotgun', x: -8,  z: -8  },
-  { id: 'w1', weapon: 'rifle',   x:  8,  z: -8  },
-  { id: 'w2', weapon: 'shotgun', x: -10, z:  8  },
-  { id: 'w3', weapon: 'rifle',   x:  10, z:  8  },
-];
+export const WEAPON_PICKUPS = [];
 export const WEAPON_PICKUP_RADIUS = 1.3;
 export const WEAPON_RESPAWN_TIME  = 25;
+
+// Which weapon each special drops on death (guaranteed drop, no chance roll)
+export const SPECIAL_WEAPON_DROPS = {
+  smoker: 'rifle',
+  spitter: 'shotgun',
+  jumper:  'sniper',
+  tank:    'shotgun',
+};
 
 // ── Enemy types ───────────────────────────────────────────────────────────────
 export const ENEMY_TYPES = {
   walker:    { speed: 2.8, hp: 100,  damage: 8,  atkRange: 1.1, atkCd: 0.9, scale: 1.0,  ranged: false },
   runner:    { speed: 6.5, hp: 50,   damage: 5,  atkRange: 1.0, atkCd: 0.6, scale: 0.75, ranged: false },
-  spitter:   { speed: 1.6, hp: 80,   damage: 0,  atkRange: 9.0, atkCd: 3.0, scale: 1.0,  ranged: true  },
+  spitter:   { speed: 1.6, hp: 80,   damage: 0,  atkRange: 9.0, atkCd: 1.5, scale: 1.0,  ranged: true  },
   tank:      { speed: 1.4, hp: 380,  damage: 28, atkRange: 1.4, atkCd: 1.6, scale: 1.6,  ranged: false },
   jumper:    { speed: 5.0, hp: 70,   damage: 10, atkRange: 1.0, atkCd: 0.8, scale: 0.9,  ranged: false, isJumper: true },
   smoker:    { speed: 1.2, hp: 90,   damage: 0,  atkRange: 14,  atkCd: 6.0, scale: 1.0,  ranged: false, isSmoker: true },
@@ -70,18 +73,22 @@ export const GRENADE_MAX         = 2;
 export const BEACON_MAX          = 1;
 export const GRENADE_STARTING    = 0;
 export const BEACON_STARTING     = 0;
-export const GRENADE_DAMAGE      = 80;
-export const GRENADE_RADIUS      = 4.2;
-export const GRENADE_FUSE        = 2.2;
-export const GRENADE_SPEED       = 10;
-export const GRENADE_THROW_RANGE = 16;
+export const GRENADE_DAMAGE        = 80;
+export const GRENADE_RADIUS        = 4.2;
+export const GRENADE_FUSE          = 2.2;
+export const GRENADE_SPEED         = 10;
+export const GRENADE_THROW_RANGE   = 16;
+export const GRENADE_LAND_FUSE     = 0.8;
+export const GRENADE_DROP_CHANCE   = 0.15;
+export const GRENADE_PICKUP_RADIUS = 1.2;
 
 // ── Beacon grenade ────────────────────────────────────────────────────────────
 export const BEACON_DURATION       = 4.0;
 export const BEACON_ATTRACT_RADIUS = 22;
 
 // ── Reconnect ────────────────────────────────────────────────────────────────
-export const RECONNECT_TIMEOUT = 30;
+export const RECONNECT_TIMEOUT       = 30;
+export const LOBBY_RECONNECT_TIMEOUT = 12;
 
 // ── Knocked down / revive ─────────────────────────────────────────────────────
 export const DOWNED_HP_DRAIN = 4;
@@ -97,18 +104,19 @@ export const TANK_CHARGE_DAMAGE   = 40;
 
 // ── Acid puddle ───────────────────────────────────────────────────────────────
 export const ACID_PUDDLE_DURATION = 6.0;
-export const ACID_PUDDLE_RADIUS   = 1.6;
+export const ACID_PUDDLE_RADIUS   = 4.8;
 export const ACID_PUDDLE_DRAIN    = 6;
 
 // ── Jumper (pins player) ──────────────────────────────────────────────────────
-export const JUMPER_PIN_DAMAGE   = 8;
+export const JUMPER_PIN_DAMAGE   = 4;
 export const JUMPER_RESCUE_RANGE = 2.0;
 
 // ── Smoker tongue ─────────────────────────────────────────────────────────────
 export const TONGUE_SPEED      = 7;
 export const TONGUE_RANGE      = 14;
 export const TONGUE_HP         = 40;
-export const TONGUE_PULL_SPEED = 1.8;
+export const TONGUE_PULL_SPEED   = 1.8;
+export const TONGUE_REACH_DAMAGE = 8;
 
 // ── Enemy drops ───────────────────────────────────────────────────────────────
 export const DROP_HP_CHANCE        = 0.12;
@@ -138,6 +146,10 @@ export const SKIN_COLORS   = [0xf5c59a, 0xe0ac69, 0xc68642, 0x8d5524];
 export const OUTFIT_COLORS = [0x2266cc, 0xcc3322, 0x33aa44, 0xcc44aa, 0x884422, 0x226644, 0x444466, 0x888822];
 export const HAT_TYPES     = ['cap', 'helmet', 'beanie', 'none'];
 export const DEFAULT_APPEARANCE = { skin: 0, outfit: 0, hat: 'cap' };
+
+// Special infected — guaranteed spawns: wave N spawns N specials (capped)
+export const SPECIAL_TYPES     = ['tank', 'spitter', 'jumper', 'smoker'];
+export const MAX_SPECIALS_PER_WAVE = 8;
 
 // Wave compositions — weighted probability per type
 export const WAVE_COMPOSITIONS = [
@@ -185,3 +197,15 @@ export const HEALTHPACK_POSITIONS = [
   { id: 'hp5', x:  9,  z:  0  },
   { id: 'hp6', x: -9,  z:  0  },
 ];
+
+// ── City missions ─────────────────────────────────────────────────────────────
+export const CITY_FUEL_POSITIONS    = [
+  { id: 'fuel0', x:  8,  z:  14 },
+  { id: 'fuel1', x: -12, z: -10 },
+];
+export const CITY_REPAIR_KIT_POS    = { id: 'rkit', x: 0, z: 13 };
+export const CITY_MISSION_CAR       = { x: 8.5, z: 6.5 };
+export const MISSION_PICKUP_RADIUS  = 1.8;
+export const MISSION_DELIVER_RADIUS = 2.5;
+export const MISSION_REPAIR_TIME    = 8.0;
+export const MISSION_DEFEND_COUNT   = 20;
