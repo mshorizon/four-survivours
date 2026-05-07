@@ -104,6 +104,11 @@ io.on('connection', (socket) => {
     if (room) room.setReady(socket.id, !!isReady);
   });
 
+  socket.on('forceStart', () => {
+    const room = getRoomOf(socket.id);
+    if (room) room.forceStart(socket.id);
+  });
+
   socket.on('mapVote', (mapId) => {
     const room = getRoomOf(socket.id);
     if (room) room.setMapVote(socket.id, mapId);
@@ -112,6 +117,11 @@ io.on('connection', (socket) => {
   socket.on('fogVote', (choice) => {
     const room = getRoomOf(socket.id);
     if (room) room.setFogVote(socket.id, choice);
+  });
+
+  socket.on('difficultyVote', (choice) => {
+    const room = getRoomOf(socket.id);
+    if (room) room.setDifficultyVote(socket.id, choice);
   });
 
   socket.on('useHealthpack', () => {
@@ -140,6 +150,15 @@ io.on('connection', (socket) => {
       if (room.size === 0) rooms.delete(room.id);
       else io.to(room.id).emit('roomInfo', { roomId: room.id, playerCount: room.size });
     }
+  });
+
+  socket.on('playerPing', ({ type, x, z }) => {
+    const room = getRoomOf(socket.id);
+    if (!room || !room.gameStarted) return;
+    const p = room.players.get(socket.id);
+    if (!p || !p.alive || p.downed) return;
+    if (!['point', 'danger', 'help'].includes(type)) return;
+    room.io.to(room.id).emit('playerPing', { name: p.name, slot: p.slot, type, x: +x || 0, z: +z || 0 });
   });
 
   socket.on('ping', ({ ts }) => {

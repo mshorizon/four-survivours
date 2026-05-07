@@ -30,7 +30,7 @@ export function buildIndustrial(scene) {
     { x: 21, z:  0, w: 5, h: 6, d: 8 },
   ].forEach(b => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(b.w,b.h,b.d), wallMat);
-    mesh.position.set(b.x,b.h/2,b.z); mesh.castShadow = true; scene.add(mesh);
+    mesh.position.set(b.x,b.h/2,b.z); mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh);
     const rMesh = new THREE.Mesh(new THREE.BoxGeometry(b.w+0.3,0.4,b.d+0.3), roofMat);
     rMesh.position.set(b.x,b.h+0.2,b.z); scene.add(rMesh);
     // industrial windows (high up)
@@ -55,7 +55,7 @@ export function buildIndustrial(scene) {
   ].forEach(({ x, z, r }, i) => {
     const col = containerColors[i % containerColors.length];
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(2.4,2.2,5.8), new THREE.MeshLambertMaterial({ color: col }));
-    mesh.position.set(x,1.1,z); mesh.rotation.y = r; mesh.castShadow = true; scene.add(mesh);
+    mesh.position.set(x,1.1,z); mesh.rotation.y = r; mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh);
     // container door lines
     const lineMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
     const line = new THREE.Mesh(new THREE.BoxGeometry(0.04,2.0,0.04), lineMat);

@@ -11,6 +11,8 @@ export class InputHandler {
     this.grenadeHeld     = false;
     this.grenadeReleased = false;
     this.beaconPressed   = false;
+    this.pingHeld        = false;
+    this._pingJustReleased = false;
 
     this._kd = e => {
       this.keys[e.code] = true;
@@ -19,10 +21,12 @@ export class InputHandler {
       if (e.code === 'Space')  { this.dashPressed    = true; e.preventDefault(); }
       if (e.code === 'KeyG')   this.grenadeHeld     = true;
       if (e.code === 'KeyF')   this.beaconPressed   = true;
+      if (e.code === 'KeyZ')   this.pingHeld        = true;
     };
     this._ku = e => {
       this.keys[e.code] = false;
       if (e.code === 'KeyG') { this.grenadeHeld = false; this.grenadeReleased = true; }
+      if (e.code === 'KeyZ') { this.pingHeld = false; this._pingJustReleased = true; }
     };
     this._mm = e => { this.mouseX = e.clientX; this.mouseY = e.clientY; };
     this._md = e => { if (e.button === 0) this.lmb = true;  };
@@ -43,6 +47,7 @@ export class InputHandler {
   consumeDash()    { const v = this.dashPressed;    this.dashPressed    = false; return v; }
   consumeGrenadeRelease() { const v = this.grenadeReleased; this.grenadeReleased = false; return v; }
   consumeBeacon()  { const v = this.beaconPressed;  this.beaconPressed  = false; return v; }
+  consumePingRelease() { const v = this._pingJustReleased; this._pingJustReleased = false; return v; }
 
   destroy() {
     window.removeEventListener('keydown',   this._kd);

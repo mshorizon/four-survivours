@@ -8,7 +8,7 @@
     "client":  "vite",
     "build":   "vite build",
     "preview": "vite preview",
-    "claude": "claude --model sonnet --dangerously-skip-permissions"
+    "claude": "claude --model sonnet --dangerously-skip-permissions --remote-control"
   },
   "dependencies": {
     "three":            "^0.170.0",

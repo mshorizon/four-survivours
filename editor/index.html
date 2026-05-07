@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Four Survivors — Map Editor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1a1a; color: #ddd; font: 13px/1.4 monospace; display: flex; height: 100vh; overflow: hidden; }
+
+    #sidebar {
+      width: 280px; min-width: 280px; background: #222; border-right: 1px solid #333;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    #sidebar-header { padding: 10px 12px; background: #2a2a2a; border-bottom: 1px solid #333; font-size: 11px; color: #888; }
+    #sidebar-header h1 { font-size: 14px; color: #eee; margin-bottom: 4px; }
+    #sidebar-tabs { display: flex; border-bottom: 1px solid #333; }
+    .stab { flex: 1; padding: 7px 4px; text-align: center; font-size: 11px; cursor: pointer; color: #888; border: none; background: none; }
+    .stab.active { color: #fff; background: #2d2d2d; border-bottom: 2px solid #4af; }
+    #sidebar-body { flex: 1; overflow-y: auto; padding: 10px; }
+
+    .section-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin: 10px 0 5px; }
+    select, input[type=text], input[type=number] {
+      background: #2a2a2a; border: 1px solid #444; color: #ddd; padding: 4px 7px;
+      font: 12px monospace; width: 100%; border-radius: 2px; margin-bottom: 5px;
+    }
+    button {
+      background: #333; border: 1px solid #555; color: #ddd; padding: 5px 10px;
+      font: 12px monospace; cursor: pointer; border-radius: 2px;
+    }
+    button:hover { background: #444; }
+    button.primary { background: #1a4a6a; border-color: #2a6a9a; color: #adf; }
+    button.primary:hover { background: #1e5a7a; }
+    button.danger { background: #4a1a1a; border-color: #7a2a2a; color: #faa; }
+    button.active-tool { background: #1a3a1a; border-color: #3a6a3a; color: #afa; }
+
+    .tool-row { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 5px; }
+    .tool-row button { flex: 1; min-width: 60px; font-size: 11px; padding: 4px 6px; }
+
+    #prop-panel { margin-top: 8px; }
+    #prop-panel label { font-size: 11px; color: #aaa; display: block; margin-bottom: 2px; }
+    .prop-row { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; }
+    .prop-row label { width: 30px; margin: 0; flex-shrink: 0; }
+    .prop-row input { margin: 0; }
+
+    #export-area { margin-top: 8px; }
+    #export-area textarea {
+      width: 100%; height: 120px; background: #111; border: 1px solid #333;
+      color: #8f8; font: 11px monospace; padding: 6px; resize: vertical;
+    }
+
+    #canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    #statusbar {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: rgba(0,0,0,0.7); padding: 3px 10px; font-size: 11px; color: #888;
+      display: flex; gap: 16px; pointer-events: none;
+    }
+    #statusbar span { color: #aaa; }
+
+    .collider-overlay { position: absolute; pointer-events: none; }
+
+    #layer-toggles { display: flex; flex-wrap: wrap; gap: 4px; }
+    #layer-toggles label { font-size: 11px; display: flex; align-items: center; gap: 3px; cursor: pointer; }
+
+    .item-list { list-style: none; }
+    .item-list li {
+      padding: 3px 6px; margin-bottom: 2px; background: #2a2a2a; border: 1px solid #383838;
+      border-radius: 2px; font-size: 11px; cursor: pointer; display: flex; justify-content: space-between;
+    }
+    .item-list li.selected { border-color: #4af; background: #1a2a3a; }
+    .item-list li:hover { background: #333; }
+    .item-list li .del { color: #f66; cursor: pointer; }
+
+    .elem-group { margin-bottom: 2px; }
+    .elem-group-hdr {
+      font-size: 11px; color: #999; background: #252525;
+      padding: 4px 8px; cursor: pointer; border: 1px solid #363636;
+      border-radius: 2px; display: flex; justify-content: space-between;
+      align-items: center; user-select: none; margin-bottom: 1px;
+    }
+    .elem-group-hdr::before { content: '▸ '; color: #555; font-size: 9px; }
+    .elem-group-hdr.grp-open::before { content: '▾ '; color: #888; font-size: 9px; }
+    .elem-group-hdr:hover { color: #ccc; background: #2e2e2e; }
+    .elem-group-hdr.grp-open { color: #eee; border-color: #555; }
+    .grp-cnt { font-size: 10px; color: #666; background: #333; padding: 0 4px; border-radius: 2px; min-width: 18px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h1>Map Editor</h1>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="map-select" style="flex:1;margin:0">
+          <option value="city">city</option>
+          <option value="forest">forest</option>
+          <option value="industrial">industrial</option>
+          <option value="forest_trail" selected>forest_trail</option>
+        </select>
+        <button id="btn-reload" title="Reload map data">↺</button>
+      </div>
+    </div>
+
+    <div id="sidebar-tabs">
+      <button class="stab active" data-tab="colliders">Elem</button>
+      <button class="stab" data-tab="pickups">Items</button>
+      <button class="stab" data-tab="missions">Miss</button>
+      <button class="stab" data-tab="layers">View</button>
+      <button class="stab" data-tab="io">I/O</button>
+    </div>
+
+    <div id="sidebar-body">
+
+      <!-- ELEMENTS TAB -->
+      <div id="tab-colliders">
+        <div class="section-label" style="display:flex;justify-content:space-between;align-items:center">
+          Add collider
+          <span style="display:flex;align-items:center;gap:4px">
+            <label style="font-size:10px;display:flex;align-items:center;gap:3px;color:#888">
+              <input type="checkbox" id="snap-toggle" checked>snap
+            </label>
+            <select id="snap-size" style="width:52px;margin:0;font-size:10px">
+              <option value="0.25">0.25</option>
+              <option value="0.5" selected>0.5</option>
+              <option value="1">1.0</option>
+            </select>
+          </span>
+        </div>
+        <div class="tool-row">
+          <button id="tool-select" class="active-tool" data-tool="select">Select</button>
+          <button id="tool-box"    data-tool="box">+ Box</button>
+          <button id="tool-circle" data-tool="circle">+ Circle</button>
+        </div>
+        <div class="tool-row">
+          <button id="tool-player-spawn" data-tool="player-spawn">+ Player</button>
+          <button id="tool-zombie-spawn" data-tool="zombie-spawn">+ Zombie</button>
+        </div>
+
+        <div class="section-label" style="margin-top:10px">Map elements</div>
+        <div id="elem-list">
+
+          <div class="elem-group">
+            <div class="elem-group-hdr grp-open" data-grp="el-spawns">
+              Zombie Spawns<span class="grp-cnt" id="cnt-spawns">0</span>
+            </div>
+            <ul class="item-list" id="el-spawns"></ul>
+          </div>
+
+          <div class="elem-group">
+            <div class="elem-group-hdr" data-grp="el-player-spawns">
+              Player Spawns<span class="grp-cnt" id="cnt-player-spawns">0</span>
+            </div>
+            <ul class="item-list" id="el-player-spawns" style="display:none"></ul>
+          </div>
+
+          <div class="elem-group">
+            <div class="elem-group-hdr" data-grp="el-env">
+              Environment<span class="grp-cnt" id="cnt-env">0</span>
+            </div>
+            <ul class="item-list" id="el-env" style="display:none"></ul>
+          </div>
+
+          <div class="elem-group">
+            <div class="elem-group-hdr" data-grp="el-weapons">
+              Weapon Pickups<span class="grp-cnt" id="cnt-weapons">0</span>
+            </div>
+            <ul class="item-list" id="el-weapons" style="display:none"></ul>
+          </div>
+
+          <div class="elem-group">
+            <div class="elem-group-hdr" data-grp="el-hpacks">
+              Health Packs<span class="grp-cnt" id="cnt-hpacks">0</span>
+            </div>
+            <ul class="item-list" id="el-hpacks" style="display:none"></ul>
+          </div>
+
+          <div class="elem-group">
+            <div class="elem-group-hdr" data-grp="el-missions">
+              Mission Items<span class="grp-cnt" id="cnt-missions-el">0</span>
+            </div>
+            <ul class="item-list" id="el-missions" style="display:none"></ul>
+          </div>
+
+          <div class="elem-group">
+            <div class="elem-group-hdr" data-grp="el-safezone">
+              Safe Zone
+            </div>
+            <ul class="item-list" id="el-safezone" style="display:none"></ul>
+          </div>
+
+        </div>
+
+        <div class="section-label">Selected</div>
+        <div id="prop-panel">
+          <div id="no-selection" style="color:#555;font-size:11px">Nothing selected</div>
+          <div id="box-props" style="display:none">
+            <div class="prop-row"><label>x</label><input type="number" id="prop-x" step="0.25"></div>
+            <div class="prop-row"><label>z</label><input type="number" id="prop-z" step="0.25"></div>
+            <div class="prop-row"><label>hw</label><input type="number" id="prop-hw" step="0.25" min="0.1"></div>
+            <div class="prop-row"><label>hd</label><input type="number" id="prop-hd" step="0.25" min="0.1"></div>
+            <button class="danger" id="btn-delete-sel" style="width:100%;margin-top:4px">Delete</button>
+          </div>
+          <div id="circle-props" style="display:none">
+            <div class="prop-row"><label>x</label><input type="number" id="prop-cx" step="0.25"></div>
+            <div class="prop-row"><label>z</label><input type="number" id="prop-cz" step="0.25"></div>
+            <div class="prop-row"><label>r</label><input type="number" id="prop-cr" step="0.1" min="0.1"></div>
+            <button class="danger" id="btn-delete-sel-c" style="width:100%;margin-top:4px">Delete</button>
+          </div>
+          <div id="spawn-props" style="display:none">
+            <div style="font-size:10px;color:#aaa;margin-bottom:3px">Zombie Spawn</div>
+            <div class="prop-row"><label>x</label><input type="number" id="prop-sx" step="0.5"></div>
+            <div class="prop-row"><label>z</label><input type="number" id="prop-sz" step="0.5"></div>
+            <button class="danger" id="btn-delete-spawn" style="width:100%;margin-top:4px">Delete</button>
+          </div>
+          <div id="player-spawn-props" style="display:none">
+            <div style="font-size:10px;color:#ffee44;margin-bottom:3px">Player Spawn</div>
+            <div class="prop-row"><label>x</label><input type="number" id="prop-psx" step="0.5"></div>
+            <div class="prop-row"><label>z</label><input type="number" id="prop-psz" step="0.5"></div>
+            <button class="danger" id="btn-delete-player-spawn" style="width:100%;margin-top:4px">Delete</button>
+          </div>
+        </div>
+
+        <div id="export-area">
+          <div class="section-label" style="display:flex;justify-content:space-between">
+            Export colliders
+            <button id="btn-export-colliders" style="font-size:10px;padding:2px 6px">Generate</button>
+          </div>
+          <textarea id="export-colliders" readonly placeholder="Click Generate..."></textarea>
+          <button id="btn-copy-colliders" style="width:100%;margin-top:4px">Copy to clipboard</button>
+        </div>
+      </div>
+
+      <!-- PICKUPS TAB -->
+      <div id="tab-pickups" style="display:none">
+        <div class="section-label">Tool</div>
+        <div class="tool-row">
+          <button id="tool-pickup-select" class="active-tool" data-tool="pickup-select">Select</button>
+          <button id="tool-pickup-add" data-tool="pickup-add">+ Weapon</button>
+          <button id="tool-hp-add" data-tool="hp-add">+ Healthpack</button>
+        </div>
+        <div class="section-label">Weapon type</div>
+        <select id="pickup-weapon-type">
+          <option value="shotgun">shotgun</option>
+          <option value="rifle">rifle</option>
+          <option value="sniper">sniper</option>
+          <option value="random">random (?)</option>
+        </select>
+
+        <div class="section-label">Selected pickup</div>
+        <div id="pickup-prop-panel">
+          <div id="no-pickup-sel" style="color:#555;font-size:11px">Nothing selected</div>
+          <div id="pickup-props" style="display:none">
+            <div class="prop-row"><label>x</label><input type="number" id="pu-x" step="0.5"></div>
+            <div class="prop-row"><label>z</label><input type="number" id="pu-z" step="0.5"></div>
+            <div id="pu-weapon-row" class="prop-row">
+              <label>wpn</label>
+              <select id="pu-weapon" style="margin:0"></select>
+            </div>
+            <button class="danger" id="btn-delete-pickup" style="width:100%;margin-top:4px">Delete</button>
+          </div>
+        </div>
+
+        <div class="section-label">Weapon pickups</div>
+        <ul class="item-list" id="weapon-pickup-list"></ul>
+        <div class="section-label">Healthpacks</div>
+        <ul class="item-list" id="hp-list"></ul>
+
+        <div id="export-area" style="margin-top:8px">
+          <div class="section-label" style="display:flex;justify-content:space-between">
+            Export
+            <button id="btn-export-pickups" style="font-size:10px;padding:2px 6px">Generate</button>
+          </div>
+          <textarea id="export-pickups" readonly placeholder="Click Generate..."></textarea>
+          <button id="btn-copy-pickups" style="width:100%;margin-top:4px">Copy to clipboard</button>
+        </div>
+      </div>
+
+      <!-- MISSIONS TAB -->
+      <div id="tab-missions" style="display:none">
+        <div style="color:#555;font-size:11px;margin-top:8px">
+          Mission item placement for city and forest_trail maps.<br><br>
+          Click an item in the list then drag it on the canvas to reposition.
+        </div>
+        <div class="section-label">Mission items</div>
+        <ul class="item-list" id="mission-item-list"></ul>
+        <div class="section-label">Safe zone</div>
+        <div class="prop-row"><label>x</label><input type="number" id="sz-x" step="0.5"></div>
+        <div class="prop-row"><label>z</label><input type="number" id="sz-z" step="0.5"></div>
+        <div class="prop-row"><label>r</label><input type="number" id="sz-r" step="0.1"></div>
+        <button id="btn-apply-sz" style="width:100%;margin-bottom:8px">Apply</button>
+
+        <div id="export-area">
+          <div class="section-label" style="display:flex;justify-content:space-between">
+            Export
+            <button id="btn-export-missions" style="font-size:10px;padding:2px 6px">Generate</button>
+          </div>
+          <textarea id="export-missions" readonly placeholder="Click Generate..."></textarea>
+          <button id="btn-copy-missions" style="width:100%;margin-top:4px">Copy to clipboard</button>
+        </div>
+      </div>
+
+      <!-- LAYERS TAB -->
+      <div id="tab-layers" style="display:none">
+        <div class="section-label">Visibility</div>
+        <div id="layer-toggles">
+          <label><input type="checkbox" data-layer="grid" checked> Grid</label>
+          <label><input type="checkbox" data-layer="preview"> Map preview</label>
+          <label><input type="checkbox" data-layer="colliders" checked> Colliders</label>
+          <label><input type="checkbox" data-layer="pickups" checked> Pickups</label>
+          <label><input type="checkbox" data-layer="spawns" checked> Zombie Spawns</label>
+          <label><input type="checkbox" data-layer="playerSpawns" checked> Player Spawns</label>
+          <label><input type="checkbox" data-layer="safezone" checked> Safe zone</label>
+          <label><input type="checkbox" data-layer="missions" checked> Missions</label>
+          <label><input type="checkbox" data-layer="boundary" checked> Boundary</label>
+          <label><input type="checkbox" data-layer="flowfield"> Flow field</label>
+        </div>
+        <div class="section-label" style="margin-top:10px">Flow field target</div>
+        <div style="font-size:11px;color:#888;margin-bottom:4px">Toward safe zone by default. Click canvas with Alt held to set custom target.</div>
+        <div class="prop-row">
+          <label>x</label><input type="number" id="ff-tx" value="0" step="1">
+        </div>
+        <div class="prop-row">
+          <label>z</label><input type="number" id="ff-tz" value="-20" step="1">
+        </div>
+        <button id="btn-compute-ff" style="width:100%;margin-bottom:4px">Compute flow field</button>
+        <div class="section-label" style="margin-top:10px">Map preview</div>
+        <button id="btn-load-preview" style="width:100%;margin-bottom:4px">Load / refresh preview</button>
+        <div class="section-label" style="margin-top:10px">Camera</div>
+        <button id="btn-reset-cam" style="width:100%">Reset view</button>
+        <div class="section-label" style="margin-top:10px">Live Playtest</div>
+        <button id="btn-playtest" class="primary" style="width:100%;margin-bottom:4px">&#9654; Playtest</button>
+        <div style="font-size:11px;color:#666">Walk + shoot in the map. No enemies.</div>
+        <div style="margin-top:8px;font-size:11px;color:#666">
+          Pan: middle-mouse drag<br>
+          Zoom: scroll wheel<br>
+          Select: left-click<br>
+          Delete: Delete key<br>
+          Undo: Ctrl+Z &nbsp; Redo: Ctrl+Y<br>
+          Alt+click: set flow field target
+        </div>
+      </div>
+
+      <!-- I/O TAB -->
+      <div id="tab-io" style="display:none">
+        <div class="section-label">Undo / Redo</div>
+        <div style="display:flex;gap:4px;margin-bottom:8px">
+          <button id="btn-undo" style="flex:1">↩ Undo</button>
+          <button id="btn-redo" style="flex:1">↪ Redo</button>
+        </div>
+
+        <div class="section-label">Auto-save</div>
+        <div style="font-size:11px;color:#888;margin-bottom:6px">State auto-saved to localStorage on every change.</div>
+        <button id="btn-reset-map" class="danger" style="width:100%;margin-bottom:8px">Reset map to defaults</button>
+
+        <div class="section-label">Export JSON</div>
+        <textarea id="export-json" style="width:100%;height:90px;background:#111;border:1px solid #333;color:#8f8;font:10px monospace;padding:6px;resize:vertical" readonly placeholder="Click Export..."></textarea>
+        <div style="display:flex;gap:4px;margin-top:4px;margin-bottom:8px">
+          <button id="btn-export-json" style="flex:1">Export</button>
+          <button id="btn-copy-json" style="flex:1">Copy</button>
+          <button id="btn-download-json" style="flex:1">Download</button>
+        </div>
+
+        <div class="section-label">Import JSON</div>
+        <textarea id="import-json" style="width:100%;height:70px;background:#111;border:1px solid #333;color:#fa8;font:10px monospace;padding:6px;resize:vertical" placeholder="Paste JSON here..."></textarea>
+        <button id="btn-import-json" class="primary" style="width:100%;margin-top:4px;margin-bottom:12px">Import</button>
+
+        <div class="section-label">Generate all snippets</div>
+        <textarea id="export-all" style="width:100%;height:140px;background:#111;border:1px solid #333;color:#8af;font:10px monospace;padding:6px;resize:vertical" readonly placeholder="Click Generate..."></textarea>
+        <div style="display:flex;gap:4px;margin-top:4px">
+          <button id="btn-gen-all" style="flex:1">Generate</button>
+          <button id="btn-copy-all" style="flex:1">Copy</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="editor-canvas"></canvas>
+    <div id="statusbar">
+      <span>x: <span id="sb-x">0.00</span></span>
+      <span>z: <span id="sb-z">0.00</span></span>
+      <span id="sb-mode">SELECT</span>
+      <span id="sb-sel"></span>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+
+  <!-- Playtest overlay -->
+  <div id="playtest-overlay" style="display:none;position:fixed;inset:0;z-index:200;">
+    <canvas id="playtest-canvas" style="display:block;"></canvas>
+    <div style="position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.65);padding:5px 14px;font-size:11px;color:#aaa;font-family:monospace;pointer-events:none;white-space:nowrap;border-radius:2px;">
+      WASD move &nbsp;&#183;&nbsp; Mouse aim &nbsp;&#183;&nbsp; LMB shoot &nbsp;&#183;&nbsp; ESC exit
+    </div>
+    <button id="btn-exit-playtest" style="position:fixed;top:10px;right:14px;z-index:201;font:12px monospace;background:#4a1a1a;border:1px solid #7a2a2a;color:#faa;padding:5px 12px;cursor:pointer;border-radius:2px;">&#x2715; Exit</button>
+  </div>
+</body>
+</html>

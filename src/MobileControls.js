@@ -42,6 +42,12 @@ export class MobileControls {
         e.stopPropagation(); e.preventDefault(); fn();
       }, opt);
     }
+
+    this.onPingBtn = null;
+    document.getElementById('mbtn-ping')?.addEventListener('touchstart', e => {
+      e.stopPropagation(); e.preventDefault();
+      this.onPingBtn?.();
+    }, opt);
   }
 
   show() { if (this.enabled) this._el.style.display = 'block'; }

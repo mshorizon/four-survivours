@@ -35,10 +35,10 @@ export function buildForest(scene) {
   treeDef.forEach(([x,z]) => {
     const h = 3 + Math.random() * 2.5;
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.28,h,7), trunkMat);
-    trunk.position.set(x, h/2, z); trunk.castShadow = true; scene.add(trunk);
+    trunk.position.set(x, h/2, z); trunk.castShadow = true; trunk.receiveShadow = true; scene.add(trunk);
     const lMat = leafMats[Math.floor(Math.random()*leafMats.length)];
     const crown = new THREE.Mesh(new THREE.DodecahedronGeometry(1.4+Math.random()*0.6,0), lMat);
-    crown.position.set(x, h+0.6, z); crown.castShadow = true; scene.add(crown);
+    crown.position.set(x, h+0.6, z); crown.castShadow = true; crown.receiveShadow = true; scene.add(crown);
   });
 
   // Fallen logs
@@ -46,14 +46,14 @@ export function buildForest(scene) {
   [{ x: 6, z: -5, r: 0.4 }, { x: -6, z: 4, r: -0.3 }, { x: 9, z: 10, r: 1.1 }].forEach(({x,z,r}) => {
     const log = new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.25,3,8), logMat);
     log.position.set(x,0.22,z); log.rotation.z = Math.PI/2; log.rotation.y = r;
-    log.castShadow = true; scene.add(log);
+    log.castShadow = true; log.receiveShadow = true; scene.add(log);
   });
 
   // Boulders
   const rockMat = new THREE.MeshLambertMaterial({ color: 0x666660 });
   [[-7,7],[8,-8],[-10,0],[7,13]].forEach(([x,z]) => {
     const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.8+Math.random()*0.4,0), rockMat);
-    rock.position.set(x,0.5,z); rock.castShadow = true; scene.add(rock);
+    rock.position.set(x,0.5,z); rock.castShadow = true; rock.receiveShadow = true; scene.add(rock);
   });
 
   // Campfire
@@ -75,6 +75,10 @@ export function buildForest(scene) {
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.20, 0.35), lampHeadM);
     head.position.set(x, 3.6, z); scene.add(head);
     const sl = new THREE.SpotLight(0xffcc88, 60, 12, Math.PI / 3.5, 0.5, 2);
+    sl.castShadow = true;
+    sl.shadow.mapSize.set(512, 512);
+    sl.shadow.camera.near = 0.5;
+    sl.shadow.camera.far  = 14;
     sl.position.set(x, 3.5, z);
     sl.target.position.set(x, 0, z);
     scene.add(sl); scene.add(sl.target);

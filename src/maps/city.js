@@ -31,7 +31,7 @@ export function buildCity(scene) {
   ];
   buildings.forEach(b => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), b.mat);
-    mesh.position.set(b.x, b.h/2, b.z); mesh.castShadow = true; scene.add(mesh);
+    mesh.position.set(b.x, b.h/2, b.z); mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh);
     for (let wx = -b.w/2+0.9; wx < b.w/2-0.3; wx += 1.4)
       for (let wy = 0.5; wy < b.h-0.6; wy += 1.3) {
         const win = new THREE.Mesh(new THREE.BoxGeometry(0.7,0.7,0.05), winMat);
@@ -42,7 +42,7 @@ export function buildCity(scene) {
   const barrMat = new THREE.MeshLambertMaterial({ color: 0xaa8833 });
   [[ 3,-1.5],[-3,-1.5],[ 3, 2.0],[-3, 2.0]].forEach(([x,z]) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(2.2,0.9,0.3), barrMat);
-    m.position.set(x,0.45,z); m.rotation.y=(Math.random()-0.5)*0.3; m.castShadow=true; scene.add(m);
+    m.position.set(x,0.45,z); m.rotation.y=(Math.random()-0.5)*0.3; m.castShadow=true; m.receiveShadow=true; scene.add(m);
   });
 
   _addCar(scene, -5.5, -7.5, 0.15, 0xd4aa00);
@@ -62,6 +62,10 @@ export function buildCity(scene) {
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.4), lampM);
     head.position.set(x,4.1,z); scene.add(head);
     const pt = new THREE.SpotLight(0xffeecc, 80, 14, Math.PI / 3.5, 0.45, 2);
+    pt.castShadow = true;
+    pt.shadow.mapSize.set(512, 512);
+    pt.shadow.camera.near = 0.5;
+    pt.shadow.camera.far  = 16;
     pt.position.set(x, 4, z);
     pt.target.position.set(x, 0, z);
     scene.add(pt); scene.add(pt.target);

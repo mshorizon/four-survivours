@@ -64,12 +64,22 @@
 
     /* ── Message ── */
     #msg { position: absolute; top: 44%; left: 50%; transform: translate(-50%, -50%); font-size: 30px; font-weight: bold; color: #ffdd44; text-shadow: 3px 3px 0 #000, 0 0 20px rgba(0,0,0,0.8); text-transform: uppercase; letter-spacing: 3px; text-align: center; white-space: nowrap; }
+    #weapon-prompt { display: none; position: absolute; bottom: 38%; left: 50%; transform: translateX(-50%); font-size: 16px; font-weight: bold; color: #fff; background: rgba(0,0,0,0.55); padding: 6px 14px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.25); text-transform: uppercase; letter-spacing: 2px; pointer-events: none; white-space: nowrap; }
 
     /* ── Reload bar ── */
     #reload-bar { position: absolute; bottom: 60px; left: 50%; transform: translateX(-50%); width: 160px; display: none; }
     #reload-label { font-size: 12px; color: #ffcc44; text-align: center; margin-bottom: 4px; }
     #reload-bg { background: #333; height: 6px; border-radius: 3px; }
     #reload-fill { background: #ffcc44; height: 100%; border-radius: 3px; width: 0%; }
+
+    /* ── Objective progress bar (bridge / generator) ── */
+    #obj-bar { position: absolute; bottom: 82px; left: 50%; transform: translateX(-50%); width: 200px; display: none; }
+    #obj-label { font-size: 11px; color: #44ccff; text-align: center; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; }
+    #obj-bg { background: #333; height: 8px; border-radius: 4px; }
+    #obj-fill { background: #44ccff; height: 100%; border-radius: 4px; width: 0%; transition: width 0.1s linear; }
+
+    /* ── In-water indicator ── */
+    #water-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,80,180,0.12); pointer-events: none; display: none; }
 
     /* ── Safe room (hidden — status shown in wave box) ── */
     #safe-room-status { display: none !important; }
@@ -171,21 +181,43 @@
     .fog-vote-btn { flex: 1; padding: 8px 4px; font-family: inherit; font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; border-radius: 3px; border: 2px solid #444; background: #1a1a2a; color: #888; transition: all 0.15s; pointer-events: all; }
     .fog-vote-btn:hover { border-color: #888; color: #ccc; }
     .fog-vote-btn.voted { border-color: #ffdd44; color: #ffdd44; background: #2a2a10; }
+    #difficulty-vote-section { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 300px; }
+    #difficulty-vote-label { font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+    #difficulty-vote-buttons { display: flex; gap: 8px; width: 100%; }
+    .difficulty-vote-btn { flex: 1; padding: 8px 4px; font-family: inherit; font-size: 12px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; cursor: pointer; border-radius: 3px; border: 2px solid #444; background: #1a1a2a; color: #888; transition: all 0.15s; pointer-events: all; }
+    .difficulty-vote-btn:hover { border-color: #888; color: #ccc; }
+    .difficulty-vote-btn.voted { border-color: #ffdd44; color: #ffdd44; background: #2a2a10; }
     #ready-btn { background: #33aa44; color: #fff; border: none; padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; transition: background 0.15s; width: 300px; pointer-events: all; }
     #ready-btn:hover { background: #44cc55; }
     #ready-btn.is-ready { background: #886622; }
+    #force-start-btn { background: #771111; color: #ffaaaa; border: 2px solid #aa3333; padding: 8px 32px; font-family: inherit; font-size: 13px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; transition: background 0.15s; width: 300px; pointer-events: all; margin-top: 6px; }
+    #force-start-btn:hover { background: #992222; border-color: #cc4444; }
     #wait-status { font-size: 12px; color: #888; letter-spacing: 1px; }
+
+    /* ── Wave Stats ── */
+    #wave-stats { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 90; background: rgba(8,10,18,0.94); border: 1px solid #2a2a3a; border-radius: 6px; display: none; flex-direction: column; align-items: center; gap: 10px; color: #fff; padding: 20px 28px; min-width: 500px; pointer-events: none; }
+    #ws-title { font-size: 26px; letter-spacing: 5px; text-transform: uppercase; color: #88ffaa; }
+    #ws-countdown { font-size: 11px; color: #666; letter-spacing: 2px; text-transform: uppercase; }
+    #ws-player-list { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+    .ws-header { display: grid; grid-template-columns: 20px 1fr repeat(4, 56px); gap: 8px; padding: 2px 8px 4px; font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px; }
+    .ws-hstat { text-align: right; }
+    .ws-row { display: grid; grid-template-columns: 20px 1fr repeat(4, 56px); align-items: center; gap: 8px; background: rgba(255,255,255,0.04); border: 1px solid #252530; border-radius: 4px; padding: 5px 8px; }
+    .ws-avatar { width: 16px; height: 16px; border-radius: 3px; }
+    .ws-name { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+    .ws-stat { font-size: 12px; color: #88ffaa; font-weight: bold; text-align: right; }
 
     /* ── Game Over ── */
     #game-over { position: fixed; inset: 0; z-index: 100; background: rgba(10,10,20,0.93); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: #fff; }
     #game-over h2 { font-size: 48px; letter-spacing: 6px; text-transform: uppercase; color: #ff4444; text-shadow: 0 0 30px rgba(255,60,60,0.5); }
     #go-stats { font-size: 14px; color: #aaa; letter-spacing: 2px; text-align: center; line-height: 1.8; }
     #go-stats span { color: #ffdd44; font-weight: bold; }
-    #go-player-list { display: flex; flex-direction: column; gap: 6px; width: 320px; }
-    .go-row { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05); border: 1px solid #333; border-radius: 4px; padding: 7px 12px; }
-    .go-avatar { width: 20px; height: 20px; border-radius: 3px; flex-shrink: 0; }
-    .go-name { flex: 1; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
-    .go-kills { font-size: 13px; color: #ffaa44; font-weight: bold; }
+    #go-player-list { display: flex; flex-direction: column; gap: 4px; width: 500px; }
+    .go-header { display: grid; grid-template-columns: 24px 1fr repeat(4, 64px); gap: 8px; padding: 2px 12px 6px; font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px; }
+    .go-hstat { text-align: right; }
+    .go-row { display: grid; grid-template-columns: 24px 1fr repeat(4, 64px); align-items: center; gap: 8px; background: rgba(255,255,255,0.05); border: 1px solid #333; border-radius: 4px; padding: 7px 12px; }
+    .go-avatar { width: 20px; height: 20px; border-radius: 3px; }
+    .go-name { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+    .go-stat { font-size: 12px; color: #ffaa44; font-weight: bold; text-align: right; }
     #go-ready-btn { background: #33aa44; color: #fff; border: none; padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; transition: background 0.15s; width: 320px; pointer-events: all; margin-top: 8px; }
     #go-ready-btn:hover { background: #44cc55; }
     #go-ready-btn.is-ready { background: #886622; }
@@ -198,7 +230,7 @@
     #victory h2 { font-size: 48px; letter-spacing: 6px; text-transform: uppercase; color: #44ff88; text-shadow: 0 0 40px rgba(60,255,120,0.6); }
     #victory .go-stats { font-size: 14px; color: #aaa; letter-spacing: 2px; text-align: center; line-height: 1.8; }
     #victory .go-stats span { color: #44ffdd; font-weight: bold; }
-    #vic-player-list { display: flex; flex-direction: column; gap: 6px; width: 320px; }
+    #vic-player-list { display: flex; flex-direction: column; gap: 4px; width: 500px; }
     #vic-ready-btn { background: #226633; color: #88ff99; border: 2px solid #44ff88; padding: 12px 32px; font-family: inherit; font-size: 16px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; transition: background 0.15s; width: 320px; pointer-events: all; margin-top: 8px; }
     #vic-ready-btn:hover { background: #337744; }
     #vic-ready-btn.is-ready { background: #886622; border-color: #ffaa22; color: #fff; }
@@ -216,6 +248,30 @@
     .mbtn.accent { border-color:rgba(255,200,60,0.5); color:#ffdd44; }
     .joy-ring { position:fixed; width:124px; height:124px; border-radius:50%; border:2px solid rgba(255,255,255,0.22); background:rgba(0,0,0,0.28); display:none; pointer-events:none; transform:translate(-50%,-50%); }
     .joy-dot  { position:absolute; width:52px; height:52px; border-radius:50%; background:rgba(255,255,255,0.42); top:50%; left:50%; transform:translate(-50%,-50%); }
+
+    /* ── Ping radial menu ── */
+    #ping-menu { position: fixed; inset: 0; z-index: 200; display: none; pointer-events: none; }
+    #ping-menu.open { display: block; background: rgba(0,0,0,0.32); pointer-events: all; }
+    .ping-opt {
+      position: absolute; transform: translate(-50%, -50%);
+      width: 86px; height: 86px; border-radius: 50%;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: 'Courier New', monospace; font-size: 10px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase;
+      border: 2px solid rgba(255,255,255,0.22); background: rgba(0,0,0,0.72);
+      transition: transform 0.1s, border-color 0.1s, background 0.1s; pointer-events: none;
+    }
+    .ping-opt.active { border-color: currentColor; background: rgba(255,255,255,0.1); transform: translate(-50%, -50%) scale(1.18); }
+    #ping-opt-point  { color: #ffdd44; left: 50%;              top: calc(50% - 120px); }
+    #ping-opt-danger { color: #ff4444; left: calc(50% + 104px); top: calc(50% + 60px); }
+    #ping-opt-help   { color: #44ff88; left: calc(50% - 104px); top: calc(50% + 60px); }
+    .ping-sym { font-size: 20px; font-weight: bold; margin-bottom: 3px; }
+    /* Mobile ping modal */
+    #ping-mobile-modal { position: fixed; left: 50%; top: 40%; transform: translateX(-50%); z-index: 200; display: none; flex-direction: column; gap: 8px; align-items: stretch; width: 150px; }
+    #ping-mobile-modal.open { display: flex; }
+    .ping-mob-btn { padding: 13px 8px; font-family: 'Courier New', monospace; font-size: 13px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; border-radius: 4px; border: 2px solid currentColor; background: rgba(0,0,0,0.85); cursor: pointer; pointer-events: all; }
+    .ping-mob-btn[data-type="point"]  { color: #ffdd44; }
+    .ping-mob-btn[data-type="danger"] { color: #ff4444; }
+    .ping-mob-btn[data-type="help"]   { color: #44ff88; }
 
     /* ── Perk overlay ── */
     #perk-overlay { position: fixed; inset: 0; z-index: 150; background: rgba(0,0,20,0.88); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 20px; color: #fff; pointer-events: all; }
@@ -248,7 +304,14 @@
       <div id="room-list"><div class="room-empty">Loading...</div></div>
     </div>
 
-    <p style="font-size:11px;color:#555">WASD Move · Mouse Aim · LMB Shoot · SPACE Dash · G Grenade · E Healthpack · R Reload</p>
+    <p style="font-size:11px;color:#555">WASD Move · Mouse Aim · LMB Shoot · SPACE Dash · G Grenade · E Healthpack · R Reload · Z Ping</p>
+  </div>
+
+  <!-- Wave Stats -->
+  <div id="wave-stats">
+    <div id="ws-title">Wave Clear</div>
+    <div id="ws-countdown">Next wave in <span id="ws-sec">5</span>s</div>
+    <div id="ws-player-list"></div>
   </div>
 
   <!-- Game Over -->
@@ -281,6 +344,7 @@
         <button class="map-vote-btn" data-map="city">City<span class="map-vote-count" id="vote-count-city">0</span></button>
         <button class="map-vote-btn" data-map="forest">Forest<span class="map-vote-count" id="vote-count-forest">0</span></button>
         <button class="map-vote-btn" data-map="industrial">Industrial<span class="map-vote-count" id="vote-count-industrial">0</span></button>
+        <button class="map-vote-btn" data-map="forest_trail">Forest Trail<span class="map-vote-count" id="vote-count-forest_trail">0</span></button>
       </div>
     </div>
     <div id="fog-vote-section">
@@ -288,6 +352,14 @@
       <div id="fog-vote-buttons">
         <button class="fog-vote-btn" data-fog="yes">On<span class="map-vote-count" id="fog-vote-count-yes">0</span></button>
         <button class="fog-vote-btn" data-fog="no">Off<span class="map-vote-count" id="fog-vote-count-no">0</span></button>
+      </div>
+    </div>
+    <div id="difficulty-vote-section">
+      <div id="difficulty-vote-label">Difficulty</div>
+      <div id="difficulty-vote-buttons">
+        <button class="difficulty-vote-btn" data-diff="easy">Easy<span class="map-vote-count" id="difficulty-vote-count-easy">0</span></button>
+        <button class="difficulty-vote-btn" data-diff="normal">Normal<span class="map-vote-count" id="difficulty-vote-count-normal">0</span></button>
+        <button class="difficulty-vote-btn" data-diff="hard">Hard<span class="map-vote-count" id="difficulty-vote-count-hard">0</span></button>
       </div>
     </div>
     <!-- Character appearance -->
@@ -298,6 +370,7 @@
       <div class="hat-row" id="hat-buttons"></div>
     </div>
     <button id="ready-btn">Ready</button>
+    <button id="force-start-btn" style="display:none">Force Start</button>
     <div id="wait-status">Waiting for all players to ready up...</div>
     <button id="room-wait-back-btn" style="margin-top:12px;background:#555;font-size:0.85em;">&#8592; Back to Menu</button>
   </div>
@@ -350,8 +423,11 @@
     </div>
 
     <div id="msg"></div>
+    <div id="weapon-prompt"></div>
 
     <div id="reload-bar"><div id="reload-label">RELOADING...</div><div id="reload-bg"><div id="reload-fill"></div></div></div>
+    <div id="obj-bar"><div id="obj-label">OBJECTIVE</div><div id="obj-bg"><div id="obj-fill"></div></div></div>
+    <div id="water-overlay"></div>
 
     <div id="action-bar">
       <div id="healthpack-bar">
@@ -391,9 +467,24 @@
         </div>
         <div class="mbtn-row">
           <button class="mbtn" id="mbtn-beacon">BCN<br>F</button>
+          <button class="mbtn" id="mbtn-ping">PNG<br>Z</button>
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Ping radial menu (Z hold on desktop) -->
+  <div id="ping-menu">
+    <div class="ping-opt" id="ping-opt-point"  data-type="point"><div class="ping-sym">^</div>POINT</div>
+    <div class="ping-opt" id="ping-opt-danger" data-type="danger"><div class="ping-sym">!</div>DANGER</div>
+    <div class="ping-opt" id="ping-opt-help"   data-type="help"><div class="ping-sym">+</div>HELP</div>
+  </div>
+
+  <!-- Mobile ping type chooser -->
+  <div id="ping-mobile-modal">
+    <button class="ping-mob-btn" data-type="point">^ POINT</button>
+    <button class="ping-mob-btn" data-type="danger">! DANGER</button>
+    <button class="ping-mob-btn" data-type="help">+ HELP</button>
   </div>
 
   <script type="module" src="/src/main.js"></script>
