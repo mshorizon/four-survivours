@@ -1452,6 +1452,22 @@ export class GameRoom {
 
   // ── Collision ───────────────────────────────────────────────────────────────
 
+  _circleSlide(ex, ez, sx, sz, r) {
+    const col = MAP_COLLIDERS[this.mapId];
+    if (!col) return null;
+    for (const c of col.circles) {
+      const dx = ex - c.x, dz = ez - c.z;
+      const m = r + c.r;
+      if (dx*dx + dz*dz > m * m * 2) continue;
+      const d = Math.sqrt(dx*dx + dz*dz) || 0.001;
+      const nx = dx / d, nz = dz / d;
+      const dot = sx * nx + sz * nz;
+      if (dot >= 0) continue;
+      return { sx: sx - dot * nx, sz: sz - dot * nz };
+    }
+    return null;
+  }
+
   _depenetrate(x, z, r) {
     const col = MAP_COLLIDERS[this.mapId];
     if (!col) return { x, z };
@@ -1925,8 +1941,19 @@ function _randomSpawn() { return { x: (Math.random()-.5)*4, z: (Math.random()-.5
 function _moveWithSlide(entity, sx, sz, r, room) {
   const nx = Math.max(-MAP_HALF, Math.min(MAP_HALF, entity.x + sx));
   const nz = Math.max(-MAP_HALF, Math.min(MAP_HALF, entity.z + sz));
-  if (!room._blocked(nx, entity.z, r)) entity.x = nx;
-  if (!room._blocked(entity.x, nz, r)) entity.z = nz;
+  const movedX = !room._blocked(nx, entity.z, r);
+  const movedZ = !room._blocked(entity.x, nz, r);
+  if (movedX) entity.x = nx;
+  if (movedZ) entity.z = nz;
+  if (!movedX && !movedZ) {
+    const slide = room._circleSlide(entity.x, entity.z, sx, sz, r);
+    if (slide) {
+      const tx = Math.max(-MAP_HALF, Math.min(MAP_HALF, entity.x + slide.sx));
+      const tz = Math.max(-MAP_HALF, Math.min(MAP_HALF, entity.z + slide.sz));
+      if (!room._blocked(tx, entity.z, r)) entity.x = tx;
+      if (!room._blocked(entity.x, tz, r)) entity.z = tz;
+    }
+  }
 }
 
 // Push entity away from any circle colliders it's overlapping or touching.
