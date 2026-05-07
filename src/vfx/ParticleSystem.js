@@ -28,13 +28,23 @@ export class ParticleSystem {
 
   // ── Public effects ──────────────────────────────────────────────────────────
 
-  muzzleFlash(x, z, angle) {
+  muzzleFlash(x, z, angle, weapon = 'pistol') {
+    const BARREL_TIP = { pistol: 0.54, shotgun: 0.76, ak47: 0.92, sniper: 0.88 };
+    const dist = BARREL_TIP[weapon] ?? 0.54;
     const fx = Math.sin(angle), fz = Math.cos(angle);
-    for (let i = 0; i < 6; i++) {
-      const sp = 5 + Math.random() * 5;
-      this._spawn(x + fx * 0.4, 1.1, z + fz * 0.4, 'fire',
-        fx * sp + (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 0.8, fz * sp,
-        0.05 + Math.random() * 0.04, 0.4 + Math.random() * 0.6);
+    const mx = x + fx * dist, mz = z + fz * dist;
+    const count = weapon === 'shotgun' ? 10 : weapon === 'ak47' ? 4 : 6;
+    for (let i = 0; i < count; i++) {
+      const sp = 5 + Math.random() * 6;
+      this._spawn(mx, 1.05, mz, 'fire',
+        fx * sp + (Math.random() - 0.5) * 2.5, 0.5 + Math.random() * 1.0, fz * sp + (Math.random() - 0.5) * 2.5,
+        0.04 + Math.random() * 0.05, 0.3 + Math.random() * 0.5);
+    }
+    const smokeCount = weapon === 'shotgun' ? 3 : 1;
+    for (let i = 0; i < smokeCount; i++) {
+      this._spawn(mx, 1.05, mz, 'smoke',
+        (Math.random() - 0.5) * 0.6, 0.4 + Math.random() * 0.4, (Math.random() - 0.5) * 0.6,
+        0.25 + Math.random() * 0.25, 1.0 + Math.random() * 0.5);
     }
   }
 

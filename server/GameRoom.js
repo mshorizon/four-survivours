@@ -1,12 +1,13 @@
 import {
   TICK_RATE, MAX_PLAYERS, PLAYER_SPEED, PLAYER_MAX_HP,
   MAP_HALF, SAFE_ZONE, SAFE_ZONE_RADIUS,
-  WAVE_BASE, WAVE_SCALE, NEXT_WAVE_DELAY, MAX_ENEMIES, SPAWN_POINTS,
-  WEAPONS, WEAPON_PICKUPS, WEAPON_PICKUP_RADIUS, WEAPON_RESPAWN_TIME, SPECIAL_WEAPON_DROPS,
+  WAVE_BASE, WAVE_SCALE, NEXT_WAVE_DELAY, MAX_ENEMIES, SPAWN_POINTS, ENEMY_MIN_SPAWN_DIST,
+  WEAPONS, WEAPON_PICKUPS_BY_MAP, WEAPON_PICKUP_RADIUS, WEAPON_RESPAWN_TIME, SPECIAL_WEAPON_DROPS,
   ENEMY_TYPES, WAVE_COMPOSITIONS, SPECIAL_TYPES, MAX_SPECIALS_PER_WAVE,
   ACID_SPEED, ACID_RANGE, ACID_DAMAGE,
   MAPS, WAVE_SAFE_DELAY,
-  HEALTHPACK_HEAL, HEALTHPACK_PICKUP_RADIUS,
+  DIFFICULTIES, DIFFICULTY_SETTINGS,
+  HEALTHPACK_HEAL, HEALTHPACK_PICKUP_RADIUS, HEALTHPACK_POSITIONS_BY_MAP, HEALTHPACK_RESPAWN_TIME,
   PLAYER_MAX_HEALTHPACKS,
   BOSS_SLAM_CD, BOSS_SLAM_RADIUS, BOSS_SLAM_DAMAGE,
   FINAL_BOSS_WAVE, FINAL_BOSS_SLAM_CD, FINAL_BOSS_SLAM_RADIUS, FINAL_BOSS_SLAM_DAMAGE,
@@ -18,6 +19,7 @@ import {
   DOWNED_HP_DRAIN, DOWNED_MAX_HP, REVIVE_RANGE, REVIVE_TIME,
   TANK_CHARGE_CD, TANK_CHARGE_SPEED, TANK_CHARGE_DURATION, TANK_CHARGE_DAMAGE,
   ACID_PUDDLE_DURATION, ACID_PUDDLE_RADIUS, ACID_PUDDLE_DRAIN,
+  ACID_BLOB_PUDDLE_DURATION, ACID_BLOB_PUDDLE_RADIUS,
   PERK_WAVE_INTERVAL, PERK_SELECT_TIME, PERKS,
   JUMPER_PIN_DAMAGE, JUMPER_RESCUE_RANGE,
   DROP_LIFETIME,
@@ -25,6 +27,13 @@ import {
   BEACON_MAX, BEACON_STARTING, BEACON_DURATION, BEACON_ATTRACT_RADIUS,
   CITY_FUEL_POSITIONS, CITY_REPAIR_KIT_POS, CITY_MISSION_CAR,
   MISSION_PICKUP_RADIUS, MISSION_DELIVER_RADIUS, MISSION_REPAIR_TIME, MISSION_DEFEND_COUNT,
+  FOREST_TRAIL_SPAWN_CENTER, FOREST_TRAIL_PLANK_POSITIONS, FOREST_TRAIL_BRIDGE_SPOT,
+  FOREST_TRAIL_KEY_POS, FOREST_TRAIL_GENERATOR, FOREST_TRAIL_BRIDGE_TIME, FOREST_TRAIL_GEN_TIME,
+  FOREST_TRAIL_TRIGGERS,
+  FOREST_TRAIL_RIVER_Z_MIN, FOREST_TRAIL_RIVER_Z_MAX,
+  FOREST_TRAIL_BRIDGE_X_MIN, FOREST_TRAIL_BRIDGE_X_MAX, WATER_SPEED_MULT,
+  FOREST_TRAIL_GEN_SPAWN_INTERVAL, FOREST_TRAIL_GEN_SPAWN_COUNT,
+  FOREST_TRAIL_GEN_FINISH_HORDE, FOREST_TRAIL_GEN_SPAWN_POINTS,
 } from '../shared/constants.js';
 import { MAP_COLLIDERS, PLAYER_RADIUS, ENEMY_RADII } from '../shared/colliders.js';
 import { FlowField } from './pathfinding/FlowField.js';
@@ -52,13 +61,17 @@ export class GameRoom {
     this.acidBlobs   = [];
     this.wave        = 1;
     this.tick        = 0;
-    this._mapIndex   = 0;
-    this.mapId       = MAPS[0];
+    this._mapIndex   = MAPS.indexOf('forest_trail');
+    this.mapId       = 'forest_trail';
     this.gameStarted = false;
     this._readySet   = new Set();
     this._votes      = new Map();
-    this._fogVotes   = new Map(); // socketId → 'yes' | 'no'
-    this.fogEnabled  = true;
+    this._fogVotes        = new Map(); // socketId → 'yes' | 'no'
+    this.fogEnabled       = false;
+    this._difficultyVotes = new Map(); // socketId → 'easy' | 'normal' | 'hard'
+    this.difficultySpeedMult = DIFFICULTY_SETTINGS.easy.speedMult;
+    this.difficultyHpMult    = DIFFICULTY_SETTINGS.easy.hpMult;
+    this.difficultyCountMult = DIFFICULTY_SETTINGS.easy.countMult;
     this._nextEnemyId  = 1;
     this._nextBulletId = 1;
     this._nextBlobId   = 1;
@@ -68,8 +81,14 @@ export class GameRoom {
     this._safeRoomOpen = false;
     this._completing   = false;
     this._kills        = new Map();
+    this._damageDealt  = new Map();
+    this._revives      = new Map();
+    this._shotsFired   = new Map();
+    this._shotsHit     = new Map();
+    this._waveKills    = new Map();
+    this._waveDamage   = new Map();
     this._gameStartTime = 0;
-    this._pickups    = WEAPON_PICKUPS.map(p => ({ ...p, respawnTimer: 0 }));
+    this._pickups    = [];
     this._weaponDrops   = [];
     this._nextDropId    = 1;
     this._healthpacks = [];
@@ -115,7 +134,7 @@ export class GameRoom {
       case 'hp_boost':      p._perkMaxHp       = Math.min(200, p._perkMaxHp + 25);
                             p.hp = Math.min(p._perkMaxHp, p.hp + 25); break;
       case 'fast_reload':   p._perkReloadMult  = Math.max(0.3, p._perkReloadMult * 0.6); break;
-      case 'extra_grenade': p.grenadeCount      = Math.min(6, p.grenadeCount + 2); break;
+      case 'extra_grenade': p.grenadeCount      = Math.min(3, p.grenadeCount + 1); break;
       case 'speed_boost':   p._perkSpeedMult   = Math.min(2.0, p._perkSpeedMult * 1.15); break;
       case 'iron_skin':     p._perkDamageTaken = Math.max(0.3, p._perkDamageTaken * 0.8); break;
       case 'hunter':        p._perkDamageMult  = Math.min(2.0, p._perkDamageMult * 1.2); break;
@@ -155,7 +174,7 @@ export class GameRoom {
     this._perkPhase = false;
     this._waveTimer = NEXT_WAVE_DELAY;
     this.io.to(this.id).emit('perkPhaseEnd');
-    this.io.to(this.id).emit('waveClear', { nextWave: this.wave + 1, delay: NEXT_WAVE_DELAY });
+    this.io.to(this.id).emit('waveClear', { nextWave: this.wave + 1, delay: NEXT_WAVE_DELAY, players: this._buildWavePlayerStats() });
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -180,6 +199,9 @@ export class GameRoom {
       _perkMaxHp: PLAYER_MAX_HP, _perkReloadMult: 1.0, _perkSpeedMult: 1.0,
       _perkDamageMult: 1.0, _perkDamageTaken: 1.0, _perkDashCdBonus: 0,
     });
+    this._votes.set(socket.id, 'forest_trail');
+    this._fogVotes.set(socket.id, 'no');
+    this._difficultyVotes.set(socket.id, 'easy');
     socket.emit('joined', { playerId: socket.id, slot: slotIndex, roomId: this.id, token, appearance: this.players.get(socket.id).appearance });
     this._broadcastLobby();
     console.log(`[Room ${this.id}] +player ${name}`);
@@ -196,6 +218,7 @@ export class GameRoom {
         this._readySet.delete(socketId);
         this._votes.delete(socketId);
         this._fogVotes.delete(socketId);
+        this._difficultyVotes.delete(socketId);
         if (this.players.size === 0) { clearInterval(this._interval); return; }
         if (this.gameStarted) {
           this._checkAllDead();
@@ -246,6 +269,7 @@ export class GameRoom {
     this._readySet.delete(socketId);
     this._votes.delete(socketId);
     this._fogVotes.delete(socketId);
+    this._difficultyVotes.delete(socketId);
     this.players.delete(socketId);
     if (this.players.size === 0) { clearInterval(this._interval); return; }
     if (this.gameStarted) {
@@ -271,7 +295,9 @@ export class GameRoom {
     this.players.set(socket.id, p);
     socket.join(this.id);
     socket.emit('joined', { playerId: socket.id, slot: p.slot, roomId: this.id, token, reconnected: true, appearance: p.appearance });
-    if (!this.gameStarted) {
+    if (this.gameStarted) {
+      socket.emit('gameReconnect', { wave: this.wave, mapId: this.mapId, fogEnabled: this.fogEnabled });
+    } else {
       this._broadcastLobby();
       this._checkAllReady();
     }
@@ -293,6 +319,15 @@ export class GameRoom {
     }
   }
 
+  forceStart(socketId) {
+    const p = this.players.get(socketId);
+    if (!p || p.disconnected || this.gameStarted) return;
+    const active = [...this.players.values()].filter(q => !q.disconnected);
+    const host = active.reduce((a, b) => (a.slot < b.slot ? a : b), active[0]);
+    if (!host || host.id !== socketId) return;
+    this._startGame();
+  }
+
   setReady(socketId, isReady) {
     const p = this.players.get(socketId);
     if (!p || p.disconnected || this.gameStarted) return;
@@ -311,6 +346,12 @@ export class GameRoom {
   setFogVote(socketId, choice) {
     if (!this.players.has(socketId) || this.gameStarted) return;
     if (choice === 'yes' || choice === 'no') this._fogVotes.set(socketId, choice);
+    this._broadcastLobby();
+  }
+
+  setDifficultyVote(socketId, choice) {
+    if (!this.players.has(socketId) || this.gameStarted) return;
+    if (DIFFICULTIES.includes(choice)) this._difficultyVotes.set(socketId, choice);
     this._broadcastLobby();
   }
 
@@ -337,8 +378,11 @@ export class GameRoom {
     for (const v of this._votes.values()) voteCounts[v] = (voteCounts[v] ?? 0) + 1;
     const fogVoteCounts = { yes: 0, no: 0 };
     for (const v of this._fogVotes.values()) fogVoteCounts[v]++;
+    const difficultyVoteCounts = { easy: 0, normal: 0, hard: 0 };
+    for (const v of this._difficultyVotes.values()) difficultyVoteCounts[v]++;
+    const host = active.length ? active.reduce((a, b) => (a.slot < b.slot ? a : b), active[0]) : null;
     this.io.to(this.id).emit('lobbyState', {
-      players, readyCount: active.filter(p => p.ready).length, totalCount: active.length, voteCounts, fogVoteCounts,
+      players, readyCount: active.filter(p => p.ready).length, totalCount: active.length, voteCounts, fogVoteCounts, difficultyVoteCounts, hostId: host?.id ?? null,
     });
   }
 
@@ -353,6 +397,8 @@ export class GameRoom {
   _pickMapFromVotes() {
     const counts = Object.fromEntries(MAPS.map(m => [m, 0]));
     for (const v of this._votes.values()) counts[v]++;
+    const totalVotes = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (totalVotes === 0) return this.mapId; // preserve default
     const max = Math.max(...Object.values(counts));
     const winners = MAPS.filter(m => counts[m] === max);
     return winners[Math.floor(Math.random() * winners.length)];
@@ -367,8 +413,20 @@ export class GameRoom {
       if (this._mapIndex < 0) this._mapIndex = 0;
       this.mapId = MAPS[this._mapIndex];
       const noVotes  = [...this._fogVotes.values()].filter(v => v === 'no').length;
-      const yesVotes = this._fogVotes.size - noVotes;
-      this.fogEnabled = noVotes <= yesVotes; // ties → fog on
+      const yesVotes = [...this._fogVotes.values()].filter(v => v === 'yes').length;
+      if (noVotes > 0 || yesVotes > 0) this.fogEnabled = noVotes < yesVotes; // preserve default if no votes
+      const diffCounts = { easy: 0, normal: 0, hard: 0 };
+      for (const v of this._difficultyVotes.values()) diffCounts[v]++;
+      const totalDiffVotes = diffCounts.easy + diffCounts.normal + diffCounts.hard;
+      if (totalDiffVotes > 0) {
+        const maxVotes = Math.max(...Object.values(diffCounts));
+        const winners = DIFFICULTIES.filter(d => diffCounts[d] === maxVotes);
+        const chosenDiff = winners[Math.floor(Math.random() * winners.length)];
+        const ds = DIFFICULTY_SETTINGS[chosenDiff];
+        this.difficultySpeedMult = ds.speedMult;
+        this.difficultyHpMult    = ds.hpMult;
+        this.difficultyCountMult = ds.countMult;
+      }
     }
 
     this.wave       = 1;
@@ -384,11 +442,16 @@ export class GameRoom {
     this._fuelDelivered  = 0;
     this._repairProgress = 0;
     this._phase1Timer    = 0;
+    this._genSpawnTimer  = 0;
     this._missionItems   = [];
     this._completing   = false;
     this._kills.clear();
-    this._pickups.forEach(p => { p.respawnTimer = 0; });
-    this._healthpacks = [];
+    this._damageDealt.clear();
+    this._revives.clear();
+    this._shotsFired.clear();
+    this._shotsHit.clear();
+    this._pickups = (WEAPON_PICKUPS_BY_MAP[this.mapId] ?? []).map(p => ({ ...p, respawnTimer: 0 }));
+    this._healthpacks = (HEALTHPACK_POSITIONS_BY_MAP[this.mapId] ?? []).map(h => ({ ...h, respawnTimer: 0 }));
     this._weaponDrops = [];
     this._grenadePicks = [];
     this._flowField = new FlowField(this.mapId);
@@ -398,12 +461,14 @@ export class GameRoom {
     this._perkOptions.clear();
 
     this.players.forEach(p => {
-      const s = _randomSpawn();
+      const s = this.mapId === 'forest_trail'
+        ? { x: FOREST_TRAIL_SPAWN_CENTER.x + (Math.random() - 0.5) * 4, z: FOREST_TRAIL_SPAWN_CENTER.z + (Math.random() - 0.5) * 4 }
+        : _randomSpawn();
       Object.assign(p, {
         x: s.x, z: s.z, hp: PLAYER_MAX_HP,
         ammo: WEAPONS.pistol.ammoMax, alive: true,
         reloading: false, weapon: 'pistol',
-        healthpacks: 0, grenadeCount: GRENADE_MAX, beaconCount: BEACON_STARTING,
+        healthpacks: 0, grenadeCount: GRENADE_STARTING, beaconCount: BEACON_STARTING,
         inSafeZone: false, disconnected: false,
         _reloadTimer: 0, _shootCd: 0, _useCd: 0,
         _dashCd: 0, _dashTime: 0, _input: {},
@@ -416,9 +481,10 @@ export class GameRoom {
 
     this.gameStarted    = true;
     this._gameStartTime = Date.now();
-    this._spawnWave(this.wave);
+    if (this.mapId !== 'forest_trail') this._spawnWave(this.wave);
     this.io.to(this.id).emit('gameStart', { wave: this.wave, mapId: this.mapId, isRestart, fogEnabled: this.fogEnabled });
-    if (this.mapId === 'city') this._initCityMissions();
+    if (this.mapId === 'city')         this._initCityMissions();
+    if (this.mapId === 'forest_trail') this._initForestTrailMissions();
     console.log(`[Room ${this.id}] START wave ${this.wave} map ${this.mapId}`);
   }
 
@@ -455,6 +521,9 @@ export class GameRoom {
 
     if (this.mapId === 'city') {
       this._updateMissions();
+    } else if (this.mapId === 'forest_trail') {
+      this._updateForestTrailMissions();
+      this._updateForestTrailTriggers();
     } else if (!this._safeRoomOpen && this._waveStart > 0 &&
         Date.now() - this._waveStart >= WAVE_SAFE_DELAY * 1000) {
       this._safeRoomOpen = true;
@@ -471,6 +540,7 @@ export class GameRoom {
     this._updateRevive();
     this._updateBullets();
     this._updateEnemies();
+    this._pushEnemiesFromCircles();
     this._separateCharacters();
     // Re-eject players pushed into walls by separation
     for (const p of this.players.values()) {
@@ -572,24 +642,112 @@ export class GameRoom {
       // WASD movement
       if (dx !== 0 || dz !== 0) {
         const len = Math.sqrt(dx*dx + dz*dz);
-        const spd = PLAYER_SPEED * p._perkSpeedMult;
+        const inWater = this.mapId === 'forest_trail'
+          && p.z >= FOREST_TRAIL_RIVER_Z_MIN && p.z <= FOREST_TRAIL_RIVER_Z_MAX
+          && !(p.x >= FOREST_TRAIL_BRIDGE_X_MIN && p.x <= FOREST_TRAIL_BRIDGE_X_MAX);
+        const waterMult = inWater ? WATER_SPEED_MULT : 1;
+        const spd = PLAYER_SPEED * p._perkSpeedMult * waterMult;
         const nx = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.x + (dx/len)*spd*DT));
         const nz = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.z + (dz/len)*spd*DT));
         if (!this._blocked(nx, p.z, PLAYER_RADIUS)) p.x = nx;
         if (!this._blocked(p.x, nz, PLAYER_RADIUS)) p.z = nz;
+        p.inWater = inWater;
+      } else {
+        const inWater = this.mapId === 'forest_trail'
+          && p.z >= FOREST_TRAIL_RIVER_Z_MIN && p.z <= FOREST_TRAIL_RIVER_Z_MAX
+          && !(p.x >= FOREST_TRAIL_BRIDGE_X_MIN && p.x <= FOREST_TRAIL_BRIDGE_X_MAX);
+        p.inWater = inWater;
+      }
+
+      // Recoil decay
+      if (p._recoilVx || p._recoilVz) {
+        p.x = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.x + (p._recoilVx ?? 0) * DT));
+        p.z = Math.max(-MAP_HALF, Math.min(MAP_HALF, p.z + (p._recoilVz ?? 0) * DT));
+        p._recoilVx = (p._recoilVx ?? 0) * 0.6;
+        p._recoilVz = (p._recoilVz ?? 0) * 0.6;
+        if (Math.abs(p._recoilVx) < 0.01) p._recoilVx = 0;
+        if (Math.abs(p._recoilVz) < 0.01) p._recoilVz = 0;
       }
 
       if (mouseAngle !== undefined) p.angle = mouseAngle;
       if (reload && !p.reloading && p.ammo < w.ammoMax) {
         p.reloading = true;
-        p._reloadTimer = w.reloadTime * p._perkReloadMult;
+        const bulletsNeeded = w.ammoMax - p.ammo;
+        const timeFraction = p.weapon === 'shotgun' ? bulletsNeeded / w.ammoMax : 1;
+        p._reloadTimer = w.reloadTime * timeFraction * p._perkReloadMult;
       }
 
-      // Use healthpack (E)
-      if (useHealthpack && p.healthpacks > 0 && p.hp < p._perkMaxHp && p._useCd <= 0) {
-        p.hp = Math.min(p._perkMaxHp, p.hp + HEALTHPACK_HEAL);
-        p.healthpacks--;
-        p._useCd = 0.5;
+      // E key: weapon pickup (priority) or healthpack
+      if (useHealthpack) {
+        const r2 = WEAPON_PICKUP_RADIUS * WEAPON_PICKUP_RADIUS;
+        const weaponPool = ['shotgun', 'ak47', 'sniper'];
+        let pickedUp = false;
+        for (const pk of this._pickups) {
+          if (pk.respawnTimer > 0) continue;
+          if (pk.weapon !== 'random' && p.weapon === pk.weapon) continue;
+          const dx = p.x - pk.x, dz = p.z - pk.z;
+          if (dx*dx + dz*dz < r2) {
+            const granted = pk.weapon === 'random'
+              ? weaponPool[Math.floor(Math.random() * weaponPool.length)]
+              : pk.weapon;
+            p.weapon = granted; p.ammo = WEAPONS[granted].ammoMax; p.reloading = false;
+            pk.respawnTimer = WEAPON_RESPAWN_TIME;
+            this.io.to(this.id).emit('weaponPickup', { playerId: p.id, weapon: granted, pickupId: pk.id });
+            pickedUp = true;
+            break;
+          }
+        }
+        if (!pickedUp) {
+          for (const d of this._weaponDrops) {
+            if (d.lifetime <= 0 || p.weapon === d.weapon) continue;
+            const dx = p.x - d.x, dz = p.z - d.z;
+            if (dx*dx + dz*dz < r2) {
+              p.weapon = d.weapon; p.ammo = WEAPONS[d.weapon].ammoMax; p.reloading = false;
+              d.lifetime = 0;
+              this.io.to(this.id).emit('weaponPickup', { playerId: p.id, weapon: d.weapon, pickupId: d.id });
+              pickedUp = true;
+              break;
+            }
+          }
+        }
+        if (!pickedUp && p._missionPickupCallback) {
+          p._missionPickupCallback();
+          p._missionPickupCallback = null;
+          pickedUp = true;
+        }
+        if (!pickedUp) {
+          const gr2 = GRENADE_PICKUP_RADIUS * GRENADE_PICKUP_RADIUS;
+          for (const gp of this._grenadePicks) {
+            if (gp.dead || p.grenadeCount >= GRENADE_MAX) continue;
+            const dx = p.x - gp.x, dz = p.z - gp.z;
+            if (dx*dx + dz*dz < gr2) {
+              p.grenadeCount++;
+              gp.dead = true;
+              this.io.to(this.id).emit('grenadePickup', { playerId: p.id, pickupId: gp.id, count: p.grenadeCount });
+              pickedUp = true;
+              break;
+            }
+          }
+        }
+        if (!pickedUp) {
+          const hr2 = HEALTHPACK_PICKUP_RADIUS * HEALTHPACK_PICKUP_RADIUS;
+          for (const hp of this._healthpacks) {
+            if (hp.respawnTimer > 0 || hp.dead || p.healthpacks >= PLAYER_MAX_HEALTHPACKS) continue;
+            const dx = p.x - hp.x, dz = p.z - hp.z;
+            if (dx*dx + dz*dz < hr2) {
+              p.healthpacks++;
+              this.io.to(this.id).emit('healthpackPickup', { playerId: p.id, pickupId: hp.id, count: p.healthpacks });
+              if (hp.isDrop) { hp.dead = true; } else { hp.respawnTimer = HEALTHPACK_RESPAWN_TIME; }
+              pickedUp = true;
+              break;
+            }
+          }
+        }
+        if (!pickedUp && p.healthpacks > 0 && p.hp < p._perkMaxHp && p._useCd <= 0) {
+          p.hp = Math.min(p._perkMaxHp, p.hp + HEALTHPACK_HEAL);
+          p.healthpacks--;
+          p._useCd = 0.5;
+        }
       }
 
       // Grenade (G) — throw to target position on release
@@ -628,6 +786,7 @@ export class GameRoom {
       if (shoot && p.ammo > 0 && !p.reloading && p._shootCd <= 0) {
         p._shootCd = w.fireRate;
         p.ammo--;
+        this._shotsFired.set(p.id, (this._shotsFired.get(p.id) ?? 0) + w.pellets);
         for (let i = 0; i < w.pellets; i++) {
           const sp = (Math.random() - 0.5) * w.spread;
           this.bullets.push({
@@ -637,6 +796,8 @@ export class GameRoom {
           });
         }
         if (p.ammo === 0) { p.reloading = true; p._reloadTimer = w.reloadTime * p._perkReloadMult; }
+        p._recoilVx = (p._recoilVx ?? 0) - Math.sin(p.angle) * w.recoil;
+        p._recoilVz = (p._recoilVz ?? 0) - Math.cos(p.angle) * w.recoil;
       }
 
       // Safe zone entry
@@ -663,7 +824,13 @@ export class GameRoom {
         if (e.dead) continue;
         const dx = b.x - e.x, dz = b.z - e.z;
         if (dx*dx + dz*dz < 0.36) {
-          e.hp -= b.damage * dmgMult; b.dist = b.range;
+          const _prevHp = e.hp;
+          e.hp -= b.damage * dmgMult;
+          const dmgDone = Math.round(_prevHp - Math.max(0, e.hp));
+          this._damageDealt.set(b.owner, (this._damageDealt.get(b.owner) ?? 0) + dmgDone);
+          this._waveDamage.set(b.owner,  (this._waveDamage.get(b.owner)  ?? 0) + dmgDone);
+          this._shotsHit.set(b.owner, (this._shotsHit.get(b.owner) ?? 0) + 1);
+          b.dist = b.range;
           if (e.hp <= 0) {
             e.dead = true;
             if (e.type === 'spitter') {
@@ -675,6 +842,7 @@ export class GameRoom {
             this._tryGrenadeDrop(e);
             const n = (this._kills.get(b.owner) ?? 0) + 1;
             this._kills.set(b.owner, n);
+            this._waveKills.set(b.owner, (this._waveKills.get(b.owner) ?? 0) + 1);
             const killer = this.players.get(b.owner);
             if (killer) this.io.to(this.id).emit('kill', { name: killer.name, slot: killer.slot, enemyType: e.type });
           }
@@ -702,6 +870,7 @@ export class GameRoom {
   // ── Enemies ─────────────────────────────────────────────────────────────────
 
   _updateEnemies() {
+    const sm    = this.difficultySpeedMult;
     const alive = [...this.players.values()].filter(p => p.alive && !p.downed && !p.inSafeZone && !p.disconnected);
     if (alive.length === 0) return;
     for (const e of this.enemies) {
@@ -774,7 +943,7 @@ export class GameRoom {
         e._chargeCd = (e._chargeCd ?? TANK_CHARGE_CD) - DT;
         if (e._chargeTime > 0) {
           e._chargeTime -= DT;
-          _moveWithSlide(e, e._chargeDx * TANK_CHARGE_SPEED * DT, e._chargeDz * TANK_CHARGE_SPEED * DT, er, this);
+          _moveWithSlide(e, e._chargeDx * TANK_CHARGE_SPEED * sm * DT, e._chargeDz * TANK_CHARGE_SPEED * sm * DT, er, this);
           for (const p of alive) {
             const pdx = p.x - e.x, pdz = p.z - e.z;
             if (pdx*pdx + pdz*pdz < 0.9 && p._dashTime <= 0) {
@@ -811,19 +980,32 @@ export class GameRoom {
             }
             e._pinnedPlayer = null;
           } else {
-            e.x = pp.x; e.z = pp.z;
-            e._atkCd = (e._atkCd ?? 0) - DT;
-            if (e._atkCd <= 0) {
-              pp.hp = Math.max(0, pp.hp - JUMPER_PIN_DAMAGE * pp._perkDamageTaken);
-              e._atkCd = stats.atkCd;
-              if (pp.hp === 0) { pp.pinnedBy = null; e._pinnedPlayer = null; _downPlayer(pp, this); }
+            // Proximity rescue: teammate within range frees pinned player
+            let rescued = false;
+            for (const r of this.players.values()) {
+              if (r.id === pp.id || !r.alive || r.downed || r.disconnected) continue;
+              const rdx = r.x - pp.x, rdz = r.z - pp.z;
+              if (rdx*rdx + rdz*rdz < JUMPER_RESCUE_RANGE * JUMPER_RESCUE_RANGE) {
+                pp.pinnedBy = null; e._pinnedPlayer = null;
+                this.io.to(this.id).emit('playerUnpinned', { playerId: pp.id });
+                rescued = true; break;
+              }
+            }
+            if (!rescued) {
+              e.x = pp.x; e.z = pp.z;
+              e._atkCd = (e._atkCd ?? 0) - DT;
+              if (e._atkCd <= 0) {
+                pp.hp = Math.max(0, pp.hp - JUMPER_PIN_DAMAGE * pp._perkDamageTaken);
+                e._atkCd = stats.atkCd;
+                if (pp.hp === 0) { pp.pinnedBy = null; e._pinnedPlayer = null; _downPlayer(pp, this); }
+              }
             }
           }
           continue;
         }
         // Not pinning: charge toward nearest
         if (dist > stats.atkRange)
-          _moveWithSlide(e, mvDx*stats.speed*DT, mvDz*stats.speed*DT, er, this);
+          _moveWithSlide(e, mvDx*stats.speed*sm*DT, mvDz*stats.speed*sm*DT, er, this);
         if (dist < stats.atkRange && nearest._dashTime <= 0 && !nearest.pinnedBy) {
           e._pinnedPlayer = nearest.id;
           nearest.pinnedBy = e.id;
@@ -835,7 +1017,7 @@ export class GameRoom {
       // ── Smoker: fire tongue ────────────────────────────────────────────────────
       if (stats.isSmoker) {
         if (dist > stats.atkRange * 0.7)
-          _moveWithSlide(e, mvDx*stats.speed*DT, mvDz*stats.speed*DT, er, this);
+          _moveWithSlide(e, mvDx*stats.speed*sm*DT, mvDz*stats.speed*sm*DT, er, this);
         e._atkCd = (e._atkCd ?? 0) - DT;
         const alreadyPulling = this._tongues.some(t => t.owner === e.id && t.attached);
         if (!alreadyPulling && dist <= stats.atkRange && e._atkCd <= 0) {
@@ -853,7 +1035,7 @@ export class GameRoom {
 
       if (stats.ranged) {
         if (dist > stats.atkRange * 0.6)
-          _moveWithSlide(e, mvDx*stats.speed*DT, mvDz*stats.speed*DT, er, this);
+          _moveWithSlide(e, mvDx*stats.speed*sm*DT, mvDz*stats.speed*sm*DT, er, this);
         e._atkCd = (e._atkCd ?? 0) - DT;
         if (dist <= stats.atkRange && e._atkCd <= 0) {
           e._atkCd = stats.atkCd;
@@ -861,7 +1043,7 @@ export class GameRoom {
         }
       } else {
         if (dist > stats.atkRange)
-          _moveWithSlide(e, mvDx*stats.speed*DT, mvDz*stats.speed*DT, er, this);
+          _moveWithSlide(e, mvDx*stats.speed*sm*DT, mvDz*stats.speed*sm*DT, er, this);
         if (dist < stats.atkRange) {
           e._atkCd = (e._atkCd ?? 0) - DT;
           if (e._atkCd <= 0) {
@@ -886,6 +1068,13 @@ export class GameRoom {
     }
   }
 
+  _pushEnemiesFromCircles() {
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      _pushFromCircleColliders(e, ENEMY_RADII[e.type] ?? 0.4, this.mapId);
+    }
+  }
+
   // ── Acid ─────────────────────────────────────────────────────────────────────
 
   _updateAcidBlobs() {
@@ -896,11 +1085,17 @@ export class GameRoom {
         if (!p.alive || p.downed || p.inSafeZone || p.disconnected || p._dashTime > 0) continue;
         const dx = b.x-p.x, dz = b.z-p.z;
         if (dx*dx+dz*dz < 0.6) {
-          p.hp = Math.max(0, p.hp - ACID_DAMAGE * p._perkDamageTaken); b.dist = ACID_RANGE;
+          p.hp = Math.max(0, p.hp - ACID_DAMAGE * p._perkDamageTaken); b.dist = ACID_RANGE; b.hit = true;
           if (p.hp === 0) _downPlayer(p, this);
           break;
         }
       }
+    }
+    // Missed blobs land and leave a small puddle for zone denial
+    for (const b of this.acidBlobs) {
+      if (b.dist < ACID_RANGE || b.hit) continue;
+      this._acidPuddles.push({ x: b.x, z: b.z, timer: ACID_BLOB_PUDDLE_DURATION });
+      this.io.to(this.id).emit('acidPuddle', { x: b.x, z: b.z, radius: ACID_BLOB_PUDDLE_RADIUS, duration: ACID_BLOB_PUDDLE_DURATION });
     }
     this.acidBlobs = this.acidBlobs.filter(b => b.dist < ACID_RANGE);
   }
@@ -921,7 +1116,9 @@ export class GameRoom {
       for (const e of this.enemies) {
         const dx = g.x - e.x, dz = g.z - e.z;
         if (dx*dx + dz*dz < GRENADE_RADIUS * GRENADE_RADIUS) {
+          const _prevHp = e.hp;
           e.hp -= GRENADE_DAMAGE;
+          this._damageDealt.set(g.owner, (this._damageDealt.get(g.owner) ?? 0) + Math.round(_prevHp - Math.max(0, e.hp)));
           if (e.hp <= 0) { e.dead = true; toKill.push({ e, owner: g.owner }); }
         }
       }
@@ -968,35 +1165,12 @@ export class GameRoom {
   }
 
   _updateGrenadePicks() {
-    for (const gp of this._grenadePicks) {
-      for (const p of this.players.values()) {
-        if (!p.alive || p.inSafeZone || p.grenadeCount >= GRENADE_MAX) continue;
-        const dx = p.x - gp.x, dz = p.z - gp.z;
-        if (dx*dx + dz*dz < GRENADE_PICKUP_RADIUS * GRENADE_PICKUP_RADIUS) {
-          p.grenadeCount++;
-          gp.dead = true;
-          this.io.to(this.id).emit('grenadePickup', { playerId: p.id, pickupId: gp.id, count: p.grenadeCount });
-          break;
-        }
-      }
-    }
     this._grenadePicks = this._grenadePicks.filter(g => !g.dead);
   }
 
   _updateWeaponDrops() {
     for (const d of this._weaponDrops) {
       d.lifetime -= DT;
-      if (d.lifetime <= 0) continue;
-      for (const p of this.players.values()) {
-        if (!p.alive || p.inSafeZone || p.weapon === d.weapon) continue;
-        const dx = p.x - d.x, dz = p.z - d.z;
-        if (dx*dx + dz*dz < WEAPON_PICKUP_RADIUS * WEAPON_PICKUP_RADIUS) {
-          p.weapon = d.weapon; p.ammo = WEAPONS[d.weapon].ammoMax; p.reloading = false;
-          d.lifetime = 0;
-          this.io.to(this.id).emit('weaponPickup', { playerId: p.id, weapon: d.weapon, pickupId: d.id });
-          break;
-        }
-      }
     }
     this._weaponDrops = this._weaponDrops.filter(d => d.lifetime > 0);
   }
@@ -1005,32 +1179,13 @@ export class GameRoom {
 
   _updatePickups() {
     for (const pk of this._pickups) {
-      if (pk.respawnTimer > 0) { pk.respawnTimer -= DT; continue; }
-      for (const p of this.players.values()) {
-        if (!p.alive || p.inSafeZone || p.weapon === pk.weapon) continue;
-        const dx = p.x-pk.x, dz = p.z-pk.z;
-        if (dx*dx+dz*dz < WEAPON_PICKUP_RADIUS*WEAPON_PICKUP_RADIUS) {
-          p.weapon = pk.weapon; p.ammo = WEAPONS[pk.weapon].ammoMax; p.reloading = false;
-          pk.respawnTimer = WEAPON_RESPAWN_TIME;
-          this.io.to(this.id).emit('weaponPickup', { playerId: p.id, weapon: pk.weapon, pickupId: pk.id });
-          break;
-        }
-      }
+      if (pk.respawnTimer > 0) { pk.respawnTimer -= DT; }
     }
   }
 
   _updateHealthpacks() {
     for (const hp of this._healthpacks) {
-      for (const p of this.players.values()) {
-        if (!p.alive || p.inSafeZone || p.healthpacks >= PLAYER_MAX_HEALTHPACKS) continue;
-        const dx = p.x-hp.x, dz = p.z-hp.z;
-        if (dx*dx+dz*dz < HEALTHPACK_PICKUP_RADIUS*HEALTHPACK_PICKUP_RADIUS) {
-          p.healthpacks++;
-          hp.dead = true;
-          this.io.to(this.id).emit('healthpackPickup', { playerId: p.id, pickupId: hp.id, count: p.healthpacks });
-          break;
-        }
-      }
+      if (hp.respawnTimer > 0) { hp.respawnTimer -= DT; }
     }
     this._healthpacks = this._healthpacks.filter(h => !h.dead);
   }
@@ -1118,7 +1273,14 @@ export class GameRoom {
   _checkAllDead() {
     if ([...this.players.values()].some(p => (p.alive || p.downed) && !p.disconnected)) return;
     const elapsed  = Math.floor((Date.now() - this._gameStartTime) / 1000);
-    const players  = [...this.players.values()].map(p => ({ id: p.id, name: p.name, slot: p.slot, kills: this._kills.get(p.id) ?? 0 }));
+    const players  = [...this.players.values()].map(p => ({
+      id: p.id, name: p.name, slot: p.slot,
+      kills:       this._kills.get(p.id)       ?? 0,
+      damage:      this._damageDealt.get(p.id) ?? 0,
+      revives:     this._revives.get(p.id)     ?? 0,
+      shotsFired:  this._shotsFired.get(p.id)  ?? 0,
+      shotsHit:    this._shotsHit.get(p.id)    ?? 0,
+    }));
     this.io.to(this.id).emit('gameOver', { wave: this.wave, survivalTime: elapsed, players });
     this.gameStarted = false;
     this._readySet.clear();
@@ -1128,6 +1290,7 @@ export class GameRoom {
   }
 
   _checkWave() {
+    if (this.mapId === 'forest_trail') return;
     if (this._perkPhase) return;
     if (this.enemies.length > 0 || this._waveTimer > 0) {
       if (this._waveTimer > 0) {
@@ -1139,7 +1302,14 @@ export class GameRoom {
     // Wave cleared
     if (this.wave >= FINAL_BOSS_WAVE) {
       const elapsed = Math.floor((Date.now() - this._gameStartTime) / 1000);
-      const players = [...this.players.values()].map(p => ({ id: p.id, name: p.name, slot: p.slot, kills: this._kills.get(p.id) ?? 0 }));
+      const players = [...this.players.values()].map(p => ({
+        id: p.id, name: p.name, slot: p.slot,
+        kills:       this._kills.get(p.id)       ?? 0,
+        damage:      this._damageDealt.get(p.id) ?? 0,
+        revives:     this._revives.get(p.id)     ?? 0,
+        shotsFired:  this._shotsFired.get(p.id)  ?? 0,
+        shotsHit:    this._shotsHit.get(p.id)    ?? 0,
+      }));
       this.io.to(this.id).emit('victory', { wave: this.wave, survivalTime: elapsed, players });
       this.gameStarted = false;
       this._readySet.clear();
@@ -1154,44 +1324,64 @@ export class GameRoom {
       return;
     }
     this._waveTimer = NEXT_WAVE_DELAY;
-    this.io.to(this.id).emit('waveClear', { nextWave: this.wave + 1, delay: NEXT_WAVE_DELAY });
+    this.io.to(this.id).emit('waveClear', { nextWave: this.wave + 1, delay: NEXT_WAVE_DELAY, players: this._buildWavePlayerStats() });
   }
 
   _validEnemySpawn(sp, r = 0.5) {
+    const alivePlayers = [...this.players.values()].filter(p => !p.disconnected && (p.alive || p.downed));
+    const minDist2 = ENEMY_MIN_SPAWN_DIST * ENEMY_MIN_SPAWN_DIST;
     for (let i = 0; i < 30; i++) {
       const x = sp.x + (Math.random() - 0.5) * 6;
       const z = sp.z + (Math.random() - 0.5) * 6;
-      if (!this._blocked(x, z, r)) return { x, z };
+      if (this._blocked(x, z, r)) continue;
+      const tooClose = alivePlayers.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < minDist2);
+      if (!tooClose) return { x, z };
     }
     return { x: sp.x, z: sp.z };
   }
 
+  _buildWavePlayerStats() {
+    return [...this.players.values()].map(p => ({
+      id: p.id, name: p.name, slot: p.slot,
+      waveKills:  this._waveKills.get(p.id)   ?? 0,
+      waveDamage: this._waveDamage.get(p.id)  ?? 0,
+      kills:      this._kills.get(p.id)        ?? 0,
+      damage:     this._damageDealt.get(p.id)  ?? 0,
+      revives:    this._revives.get(p.id)      ?? 0,
+      shotsFired: this._shotsFired.get(p.id)   ?? 0,
+      shotsHit:   this._shotsHit.get(p.id)     ?? 0,
+    }));
+  }
+
   _spawnWave(n) {
-    const count = Math.min(WAVE_BASE + (n-1)*WAVE_SCALE, MAX_ENEMIES);
+    this._waveKills  = new Map();
+    this._waveDamage = new Map();
+    const hm    = this.difficultyHpMult;
+    const count = Math.min(Math.round((WAVE_BASE + (n-1)*WAVE_SCALE) * this.difficultyCountMult), MAX_ENEMIES);
     const comp  = WAVE_COMPOSITIONS[Math.min(n-1, WAVE_COMPOSITIONS.length-1)];
     for (let i = 0; i < count; i++) {
       const sp   = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
       const type = _weightedRandom(comp);
       const pos  = this._validEnemySpawn(sp, ENEMY_RADII[type] ?? 0.4);
-      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: ENEMY_TYPES[type].hp, dead: false, type, _atkCd: 0 });
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: Math.round(ENEMY_TYPES[type].hp * hm), dead: false, type, _atkCd: 0 });
     }
     const specialCount = Math.min(n, MAX_SPECIALS_PER_WAVE);
     for (let i = 0; i < specialCount; i++) {
       const sp   = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
       const type = SPECIAL_TYPES[Math.floor(Math.random()*SPECIAL_TYPES.length)];
       const pos  = this._validEnemySpawn(sp, ENEMY_RADII[type] ?? 0.4);
-      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: ENEMY_TYPES[type].hp, dead: false, type, _atkCd: 0 });
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: Math.round(ENEMY_TYPES[type].hp * hm), dead: false, type, _atkCd: 0 });
     }
     if (n % 5 === 0 && n < FINAL_BOSS_WAVE) {
       const sp  = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
       const pos = this._validEnemySpawn(sp, ENEMY_RADII.boss ?? 0.4);
-      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: ENEMY_TYPES.boss.hp, dead: false, type: 'boss', _atkCd: 0, _slamCd: BOSS_SLAM_CD });
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: Math.round(ENEMY_TYPES.boss.hp * hm), dead: false, type: 'boss', _atkCd: 0, _slamCd: BOSS_SLAM_CD });
       this.io.to(this.id).emit('bossSpawn', { wave: n, final: false });
     }
     if (n >= FINAL_BOSS_WAVE) {
       const sp  = SPAWN_POINTS[Math.floor(Math.random()*SPAWN_POINTS.length)];
       const pos = this._validEnemySpawn(sp, ENEMY_RADII.finalboss ?? 0.4);
-      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: ENEMY_TYPES.finalboss.hp, dead: false, type: 'finalboss', _atkCd: 0, _slamCd: FINAL_BOSS_SLAM_CD });
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: Math.round(ENEMY_TYPES.finalboss.hp * hm), dead: false, type: 'finalboss', _atkCd: 0, _slamCd: FINAL_BOSS_SLAM_CD });
       this.io.to(this.id).emit('bossSpawn', { wave: n, final: true });
     }
     // Replenish beacons each wave (include downed players so they have them on revive)
@@ -1230,6 +1420,7 @@ export class GameRoom {
             d.alive  = true;
             d.hp     = Math.round(d._perkMaxHp * 0.4);
             d._reviveProgress = 0;
+            this._revives.set(r.id, (this._revives.get(r.id) ?? 0) + 1);
             this.io.to(this.id).emit('playerRevived', { playerId: d.id, hp: d.hp, revivedBy: r.id });
           }
           break;
@@ -1338,6 +1529,7 @@ export class GameRoom {
     this._fuelDelivered  = 0;
     this._repairProgress = 0;
     this._phase1Timer    = 0;
+    this._genSpawnTimer  = 0;
     this._missionItems   = [
       ...CITY_FUEL_POSITIONS.map(p => ({ ...p, type: 'fuel',      pickedUp: false })),
       { ...CITY_REPAIR_KIT_POS, type: 'repairKit', pickedUp: false },
@@ -1359,15 +1551,30 @@ export class GameRoom {
     if (!p.carrying) return;
     const type = p.carrying;
     p.carrying = null;
-    if (type === 'fuel') {
-      const item = this._missionItems.find(i => i.type === 'fuel' && i.pickedUp);
-      if (item) { item.pickedUp = false; item.x = p.x; item.z = p.z; this.io.to(this.id).emit('missionItemDropped', { itemId: item.id, x: item.x, z: item.z }); }
-    } else if (type === 'repairKit') {
-      const item = this._missionItems.find(i => i.type === 'repairKit');
-      if (item) { item.pickedUp = false; item.x = p.x; item.z = p.z; this.io.to(this.id).emit('missionItemDropped', { itemId: item.id, x: item.x, z: item.z }); }
-      if (this._missionPhase >= 3) {
-        this._missionPhase = 2;
-        this.io.to(this.id).emit('missionUpdate', { phase: 2, label: 'Repair kit dropped! Pick it back up.', items: [item], carPos: CITY_MISSION_CAR });
+    if (this.mapId === 'city') {
+      if (type === 'fuel') {
+        const item = this._missionItems.find(i => i.type === 'fuel' && i.pickedUp);
+        if (item) { item.pickedUp = false; item.x = p.x; item.z = p.z; this.io.to(this.id).emit('missionItemDropped', { itemId: item.id, x: item.x, z: item.z }); }
+      } else if (type === 'repairKit') {
+        const item = this._missionItems.find(i => i.type === 'repairKit');
+        if (item) { item.pickedUp = false; item.x = p.x; item.z = p.z; this.io.to(this.id).emit('missionItemDropped', { itemId: item.id, x: item.x, z: item.z }); }
+        if (this._missionPhase >= 3) {
+          this._missionPhase = 2;
+          this.io.to(this.id).emit('missionUpdate', { phase: 2, label: 'Repair kit dropped! Pick it back up.', items: [item], deliveryPos: CITY_MISSION_CAR });
+        }
+      }
+    } else if (this.mapId === 'forest_trail') {
+      const item = this._missionItems.find(i => i.type === type && i.pickedUp);
+      if (item) {
+        item.pickedUp = false; item.x = p.x; item.z = p.z;
+        this.io.to(this.id).emit('missionItemDropped', { itemId: item.id, x: item.x, z: item.z });
+        if (type === 'genkey' && this._missionPhase === 3) {
+          this._missionPhase = 2;
+          this.io.to(this.id).emit('missionUpdate', {
+            phase: 2, label: 'Key dropped! Find it and start the generator.',
+            items: [item], deliveryPos: FOREST_TRAIL_GENERATOR,
+          });
+        }
       }
     }
   }
@@ -1382,12 +1589,23 @@ export class GameRoom {
     this.io.to(this.id).emit('defendHorde');
   }
 
+  _spawnAtPoints(spawnPoints, count) {
+    const hm = this.difficultyHpMult;
+    for (let i = 0; i < count; i++) {
+      const sp   = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+      const type = Math.random() < 0.6 ? 'walker' : 'runner';
+      const pos  = this._validEnemySpawn(sp, ENEMY_RADII[type] ?? 0.4);
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: Math.round(ENEMY_TYPES[type].hp * hm), dead: false, type, _atkCd: 0 });
+    }
+  }
+
   _updateMissions() {
     if (this._missionPhase >= 4) return;
 
     // Drop items if carrier is downed, dead, or disconnected
     for (const p of this.players.values()) {
       if (p.carrying && (!p.alive || p.downed || p.disconnected)) this._dropCarrying(p);
+      p._missionPickupCallback = null;
     }
 
     const players = [...this.players.values()].filter(p => p.alive && !p.downed && !p.inSafeZone && !p.disconnected);
@@ -1399,8 +1617,11 @@ export class GameRoom {
           if (item.type !== 'fuel' || item.pickedUp) continue;
           const dx = p.x - item.x, dz = p.z - item.z;
           if (dx*dx + dz*dz < MISSION_PICKUP_RADIUS * MISSION_PICKUP_RADIUS) {
-            item.pickedUp = true; p.carrying = 'fuel';
-            this.io.to(this.id).emit('missionItemPickup', { itemId: item.id, playerId: p.id });
+            const _item = item;
+            p._missionPickupCallback = () => {
+              _item.pickedUp = true; p.carrying = 'fuel';
+              this.io.to(this.id).emit('missionItemPickup', { itemId: _item.id, playerId: p.id });
+            };
             break;
           }
         }
@@ -1437,11 +1658,14 @@ export class GameRoom {
         if (p.carrying) continue;
         const dx = p.x - rkit.x, dz = p.z - rkit.z;
         if (dx*dx + dz*dz < MISSION_PICKUP_RADIUS * MISSION_PICKUP_RADIUS) {
-          rkit.pickedUp = true; p.carrying = 'repairKit';
-          this._missionPhase = 3;
-          this._spawnDefendHorde();
-          this.io.to(this.id).emit('missionItemPickup', { itemId: rkit.id, playerId: p.id });
-          this.io.to(this.id).emit('missionUpdate', { phase: 3, label: 'Repair the engine! Defend the mechanic!', carPos: CITY_MISSION_CAR });
+          const _rkit = rkit;
+          p._missionPickupCallback = () => {
+            _rkit.pickedUp = true; p.carrying = 'repairKit';
+            this._missionPhase = 3;
+            this._spawnDefendHorde();
+            this.io.to(this.id).emit('missionItemPickup', { itemId: _rkit.id, playerId: p.id });
+            this.io.to(this.id).emit('missionUpdate', { phase: 3, label: 'Repair the engine! Defend the mechanic!', carPos: CITY_MISSION_CAR });
+          };
           break;
         }
       }
@@ -1464,6 +1688,172 @@ export class GameRoom {
     }
   }
 
+  // ── Forest Trail missions ────────────────────────────────────────────────────
+
+  _initForestTrailMissions() {
+    this._missionPhase    = 0;
+    this._planksDelivered = 0;
+    this._bridgeProgress  = 0;
+    this._genProgress     = 0;
+    this._genSpawnTimer   = 0;
+    this._ftTriggers      = FOREST_TRAIL_TRIGGERS.map(t => ({ ...t, triggered: false }));
+    this._missionItems    = [
+      ...FOREST_TRAIL_PLANK_POSITIONS.map(p => ({ ...p, type: 'plank',  pickedUp: false })),
+      { ...FOREST_TRAIL_KEY_POS,           type: 'genkey', pickedUp: false },
+    ];
+    this.io.to(this.id).emit('missionUpdate', {
+      phase: 0, label: 'Find bridge planks (0/2)',
+      items: this._missionItems.filter(i => i.type === 'plank'),
+      deliveryPos: FOREST_TRAIL_BRIDGE_SPOT,
+    });
+  }
+
+  _visibleForestTrailItems() {
+    if (this._missionPhase < 2)   return this._missionItems.filter(i => i.type === 'plank'  && !i.pickedUp);
+    if (this._missionPhase === 2) return this._missionItems.filter(i => i.type === 'genkey' && !i.pickedUp);
+    return [];
+  }
+
+  _ftDeliveryPos() {
+    if (this._missionPhase <= 1) return FOREST_TRAIL_BRIDGE_SPOT;
+    if (this._missionPhase <= 3) return FOREST_TRAIL_GENERATOR;
+    return null;
+  }
+
+  _updateForestTrailMissions() {
+    if (this._missionPhase >= 4) return;
+
+    for (const p of this.players.values()) {
+      if (p.carrying && (!p.alive || p.downed || p.disconnected)) this._dropCarrying(p);
+      p._missionPickupCallback = null;
+    }
+
+    const players = [...this.players.values()].filter(p => p.alive && !p.downed && !p.inSafeZone && !p.disconnected);
+
+    if (this._missionPhase === 0) {
+      for (const p of players) {
+        if (p.carrying) continue;
+        for (const item of this._missionItems) {
+          if (item.type !== 'plank' || item.pickedUp) continue;
+          const dx = p.x - item.x, dz = p.z - item.z;
+          if (dx*dx + dz*dz < MISSION_PICKUP_RADIUS * MISSION_PICKUP_RADIUS) {
+            const _item = item;
+            p._missionPickupCallback = () => {
+              _item.pickedUp = true; p.carrying = 'plank';
+              this.io.to(this.id).emit('missionItemPickup', { itemId: _item.id, playerId: p.id });
+            };
+            break;
+          }
+        }
+      }
+      for (const p of players) {
+        if (p.carrying !== 'plank') continue;
+        const dx = p.x - FOREST_TRAIL_BRIDGE_SPOT.x, dz = p.z - FOREST_TRAIL_BRIDGE_SPOT.z;
+        if (dx*dx + dz*dz < MISSION_DELIVER_RADIUS * MISSION_DELIVER_RADIUS) {
+          p.carrying = null;
+          this._planksDelivered++;
+          if (this._planksDelivered >= 2) {
+            this._missionPhase = 1;
+            this._bridgeProgress = 0;
+            this._spawnDefendHorde();
+            this.io.to(this.id).emit('missionUpdate', {
+              phase: 1, label: 'Building bridge! Defend the site!',
+              deliveryPos: FOREST_TRAIL_BRIDGE_SPOT,
+            });
+          } else {
+            this.io.to(this.id).emit('missionUpdate', {
+              phase: 0, label: `Plank delivered (${this._planksDelivered}/2) — find more!`,
+              items: this._visibleForestTrailItems(), deliveryPos: FOREST_TRAIL_BRIDGE_SPOT,
+            });
+          }
+        }
+      }
+    } else if (this._missionPhase === 1) {
+      this._bridgeProgress = Math.min(1, this._bridgeProgress + DT / FOREST_TRAIL_BRIDGE_TIME);
+      if (this._bridgeProgress >= 1) {
+        this._missionPhase = 2;
+        const key = this._missionItems.find(i => i.type === 'genkey');
+        this.io.to(this.id).emit('missionUpdate', {
+          phase: 2, label: 'Bridge fixed! Find the generator key.',
+          items: [key], deliveryPos: FOREST_TRAIL_GENERATOR,
+        });
+      }
+    } else if (this._missionPhase === 2) {
+      const key = this._missionItems.find(i => i.type === 'genkey');
+      if (!key || key.pickedUp) return;
+      for (const p of players) {
+        if (p.carrying) continue;
+        const dx = p.x - key.x, dz = p.z - key.z;
+        if (dx*dx + dz*dz < MISSION_PICKUP_RADIUS * MISSION_PICKUP_RADIUS) {
+          const _key = key;
+          p._missionPickupCallback = () => {
+            _key.pickedUp = true; p.carrying = 'genkey';
+            this._missionPhase = 3;
+            this._spawnDefendHorde();
+            this.io.to(this.id).emit('missionItemPickup', { itemId: _key.id, playerId: p.id });
+            this.io.to(this.id).emit('missionUpdate', {
+              phase: 3, label: 'Start the generator! Defend!',
+              deliveryPos: FOREST_TRAIL_GENERATOR,
+            });
+          };
+          break;
+        }
+      }
+    } else if (this._missionPhase === 3) {
+      const carrier = [...this.players.values()].find(p => p.carrying === 'genkey' && p.alive && !p.downed);
+      if (!carrier) return;
+      const dx = carrier.x - FOREST_TRAIL_GENERATOR.x, dz = carrier.z - FOREST_TRAIL_GENERATOR.z;
+      if (dx*dx + dz*dz < MISSION_DELIVER_RADIUS * MISSION_DELIVER_RADIUS) {
+        this._genProgress = Math.min(1, this._genProgress + DT / FOREST_TRAIL_GEN_TIME);
+        this._genSpawnTimer -= DT;
+        if (this._genSpawnTimer <= 0) {
+          this._genSpawnTimer = FOREST_TRAIL_GEN_SPAWN_INTERVAL;
+          this._spawnAtPoints(FOREST_TRAIL_GEN_SPAWN_POINTS, FOREST_TRAIL_GEN_SPAWN_COUNT);
+          this.io.to(this.id).emit('defendHorde');
+        }
+        if (this._genProgress >= 1) {
+          carrier.carrying = null;
+          this._missionPhase = 4;
+          this._safeRoomOpen = true;
+          this._spawnAtPoints(FOREST_TRAIL_GEN_SPAWN_POINTS, FOREST_TRAIL_GEN_FINISH_HORDE);
+          this.io.to(this.id).emit('missionUpdate', { phase: 4, label: 'Generator started! RUN to the safe house — do NOT fight!' });
+          this.io.to(this.id).emit('safeRoomOpen');
+          this.io.to(this.id).emit('defendHorde');
+        }
+      } else {
+        this._genProgress = Math.max(0, this._genProgress - DT / FOREST_TRAIL_GEN_TIME * 0.5);
+      }
+    }
+  }
+
+  _updateForestTrailTriggers() {
+    for (const trigger of this._ftTriggers) {
+      if (trigger.triggered) continue;
+      for (const p of this.players.values()) {
+        if (!p.alive || p.downed || p.disconnected || p.inSafeZone) continue;
+        const dx = p.x - trigger.x, dz = p.z - trigger.z;
+        if (dx * dx + dz * dz < trigger.radius * trigger.radius) {
+          trigger.triggered = true;
+          this._spawnForestTrigger(trigger);
+          break;
+        }
+      }
+    }
+  }
+
+  _spawnForestTrigger(trigger) {
+    const hm    = this.difficultyHpMult;
+    const count = Math.round(trigger.count * this.difficultyCountMult);
+    const comp  = WAVE_COMPOSITIONS[Math.min(trigger.compIndex, WAVE_COMPOSITIONS.length - 1)];
+    for (let i = 0; i < count; i++) {
+      const sp   = trigger.spawnPoints[Math.floor(Math.random() * trigger.spawnPoints.length)];
+      const type = _weightedRandom(comp);
+      const pos  = this._validEnemySpawn(sp, ENEMY_RADII[type] ?? 0.4);
+      this.enemies.push({ id: this._nextEnemyId++, x: pos.x, z: pos.z, angle: 0, hp: Math.round(ENEMY_TYPES[type].hp * hm), dead: false, type, _atkCd: 0 });
+    }
+    console.log(`[Room ${this.id}] forest trigger (${trigger.x},${trigger.z}) → ${count} enemies`);
+  }
+
   // ── Broadcast ───────────────────────────────────────────────────────────────
 
   _broadcastGame() {
@@ -1484,9 +1874,10 @@ export class GameRoom {
         reviveProgress: p._reviveProgress,
         pinnedBy: p.pinnedBy, pulledBy: p.pulledBy,
         carrying: p.carrying ?? null,
+        inWater: p.inWater ?? false,
       })),
       enemies:    this.enemies.map(e => ({ id: e.id, x: e.x, z: e.z, angle: e.angle, hp: e.hp, type: e.type })),
-      bullets:    this.bullets.map(b => ({ id: b.id, x: b.x, z: b.z })),
+      bullets:    this.bullets.map(b => ({ id: b.id, x: b.x, z: b.z, dx: b.dx, dz: b.dz })),
       acidBlobs:  this.acidBlobs.map(b => ({ id: b.id, x: b.x, z: b.z })),
       grenades:     this._grenadeProj.map(g => ({ id: g.id, x: g.x, z: g.z })),
       grenadePicks: this._grenadePicks.map(g => ({ id: g.id, x: g.x, z: g.z })),
@@ -1494,7 +1885,7 @@ export class GameRoom {
         ...this._pickups.map(p => ({ id: p.id, weapon: p.weapon, x: p.x, z: p.z, active: p.respawnTimer <= 0 })),
         ...this._weaponDrops.map(d => ({ id: d.id, weapon: d.weapon, x: d.x, z: d.z, active: true })),
       ],
-      healthpacks: this._healthpacks.map(h => ({ id: h.id, x: h.x, z: h.z, active: true })),
+      healthpacks: this._healthpacks.map(h => ({ id: h.id, x: h.x, z: h.z, active: h.respawnTimer <= 0 })),
       acidPuddles: this._acidPuddles.map(a => ({ x: a.x, z: a.z, radius: ACID_PUDDLE_RADIUS, timer: a.timer })),
       tongues:    this._tongues.map(t => ({ id: t.id, x: t.x, z: t.z, attached: t.attached })),
       beacons:    this._beacons.map(b => ({ x: b.x, z: b.z, timer: b.timer })),
@@ -1504,7 +1895,13 @@ export class GameRoom {
         fuelDelivered:  this._fuelDelivered,
         repairProgress: this._repairProgress,
         items:          this._visibleMissionItems(),
-        carPos:         CITY_MISSION_CAR,
+        deliveryPos:    CITY_MISSION_CAR,
+      } : this.mapId === 'forest_trail' ? {
+        phase:          this._missionPhase,
+        bridgeProgress: this._bridgeProgress,
+        genProgress:    this._genProgress,
+        items:          this._visibleForestTrailItems(),
+        deliveryPos:    this._ftDeliveryPos(),
       } : null,
     });
   }
@@ -1514,7 +1911,7 @@ export class GameRoom {
 
 function _downPlayer(p, room) {
   if (p.downed) return; // already downed
-  if (p.carrying && room.mapId === 'city') room._dropCarrying(p);
+  if (p.carrying) room._dropCarrying(p);
   p.alive  = false;
   p.downed = true;
   p.downedHp = DOWNED_MAX_HP;
@@ -1530,6 +1927,23 @@ function _moveWithSlide(entity, sx, sz, r, room) {
   const nz = Math.max(-MAP_HALF, Math.min(MAP_HALF, entity.z + sz));
   if (!room._blocked(nx, entity.z, r)) entity.x = nx;
   if (!room._blocked(entity.x, nz, r)) entity.z = nz;
+}
+
+// Push entity away from any circle colliders it's overlapping or touching.
+function _pushFromCircleColliders(entity, er, mapId) {
+  const col = MAP_COLLIDERS[mapId];
+  if (!col) return;
+  for (const c of col.circles) {
+    const dx = entity.x - c.x, dz = entity.z - c.z;
+    const dist2 = dx*dx + dz*dz;
+    const minD = er + c.r;
+    if (dist2 < minD * minD && dist2 > 0) {
+      const dist = Math.sqrt(dist2);
+      const push = minD - dist;
+      entity.x += (dx / dist) * push;
+      entity.z += (dz / dist) * push;
+    }
+  }
 }
 
 function _pushApart(a, b, ra, rb, ratioA, ratioB) {

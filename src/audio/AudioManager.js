@@ -19,7 +19,7 @@ export class AudioManager {
       const o = this._master;
       if (weapon === 'shotgun') {
         _noise(c, o, 1.1, 0, 0.22); _tone(c, o, 'sawtooth', 155, 0, 0.01, 0.18, 0.38);
-      } else if (weapon === 'rifle') {
+      } else if (weapon === 'ak47') {
         _tone(c, o, 'sawtooth', 650, 0, 0.005, 0.06, 0.5); _noise(c, o, 0.3, 0, 0.04);
       } else { // pistol
         _tone(c, o, 'sawtooth', 500, 0, 0.008, 0.09, 0.42); _noise(c, o, 0.2, 0, 0.07);
