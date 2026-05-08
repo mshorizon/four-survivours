@@ -594,7 +594,15 @@ export class GameRoom {
       // Timers
       if (p.reloading) {
         p._reloadTimer -= DT;
-        if (p._reloadTimer <= 0) { p.ammo = w.ammoMax; p.reloading = false; }
+        if (p._reloadTimer <= 0) {
+          if (p.weapon === 'shotgun') {
+            p.ammo = Math.min(p.ammo + 1, w.ammoMax);
+            if (p.ammo >= w.ammoMax) { p.reloading = false; }
+            else { p._reloadTimer = (w.reloadTime / w.ammoMax) * p._perkReloadMult; }
+          } else {
+            p.ammo = w.ammoMax; p.reloading = false;
+          }
+        }
       }
       p._dashCd -= DT;
       p._useCd  -= DT;
@@ -672,9 +680,9 @@ export class GameRoom {
       if (mouseAngle !== undefined) p.angle = mouseAngle;
       if (reload && !p.reloading && p.ammo < w.ammoMax) {
         p.reloading = true;
-        const bulletsNeeded = w.ammoMax - p.ammo;
-        const timeFraction = p.weapon === 'shotgun' ? bulletsNeeded / w.ammoMax : 1;
-        p._reloadTimer = w.reloadTime * timeFraction * p._perkReloadMult;
+        p._reloadTimer = p.weapon === 'shotgun'
+          ? (w.reloadTime / w.ammoMax) * p._perkReloadMult
+          : w.reloadTime * p._perkReloadMult;
       }
 
       // E key: weapon pickup (priority) or healthpack
@@ -783,6 +791,9 @@ export class GameRoom {
 
       // Shoot
       p._shootCd -= DT;
+      if (shoot && p.weapon === 'shotgun' && p.reloading && p.ammo > 0 && p._shootCd <= 0) {
+        p.reloading = false;
+      }
       if (shoot && p.ammo > 0 && !p.reloading && p._shootCd <= 0) {
         p._shootCd = w.fireRate;
         p.ammo--;
@@ -795,7 +806,12 @@ export class GameRoom {
             dist: 0, owner: p.id, damage: w.damage, range: w.range, speed: w.speed,
           });
         }
-        if (p.ammo === 0) { p.reloading = true; p._reloadTimer = w.reloadTime * p._perkReloadMult; }
+        if (p.ammo === 0) {
+          p.reloading = true;
+          p._reloadTimer = p.weapon === 'shotgun'
+            ? (w.reloadTime / w.ammoMax) * p._perkReloadMult
+            : w.reloadTime * p._perkReloadMult;
+        }
         p._recoilVx = (p._recoilVx ?? 0) - Math.sin(p.angle) * w.recoil;
         p._recoilVz = (p._recoilVz ?? 0) - Math.cos(p.angle) * w.recoil;
       }

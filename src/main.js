@@ -6,7 +6,8 @@ import { buildMap }       from './GameWorld.js';
 import { AudioManager }   from './audio/AudioManager.js';
 import { ParticleSystem }  from './vfx/ParticleSystem.js';
 import { DamageNumbers }   from './vfx/DamageNumbers.js';
-import { MobileControls }  from './MobileControls.js';
+import { MobileControls }       from './MobileControls.js';
+import { createPostProcessing } from './vfx/PostProcessing.js';
 import {
   PLAYER_COLORS, PLAYER_MAX_HP, WEAPONS, MAP_HALF, WAVE_SAFE_DELAY,
   SKIN_COLORS, OUTFIT_COLORS, HAT_TYPES, DEFAULT_APPEARANCE,
@@ -29,6 +30,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  pp.resize(window.innerWidth, window.innerHeight);
 });
 
 const scene = new THREE.Scene();
@@ -40,6 +42,8 @@ camera.position.copy(CAM_OFFSET);
 camera.lookAt(0, 0, 0);
 
 const PLAYER_BODY_LIGHT_ENABLED = false;
+
+let pp = createPostProcessing(renderer, scene, camera);
 
 // Lights — kept very dim; flashlight SpotLights per player provide main illumination
 const ambient = new THREE.AmbientLight(0x000000, 0.0);
@@ -587,9 +591,10 @@ function syncPlayers(players, dt) {
     ent.prevX = p.x; ent.prevZ = p.z;
 
     const isPinned = !!(p.pinnedBy || p.pulledBy);
-    mesh.position.set(p.x, isPinned ? 0.7 : 0, p.z);
+    mesh.position.set(p.x, isPinned ? 0.7 : (p.downed ? 0.15 : 0), p.z);
     mesh.rotation.y = (p.id === net.playerId) ? getMouseAngle() : p.angle;
-    mesh.rotation.x = p.downed ? Math.PI / 2 : 0;
+    mesh.rotation.x = 0;
+    mesh.rotation.z = p.downed ? Math.PI / 2 : 0;
     mesh.visible    = p.alive || p.downed;
     if (ent.outline) {
       // world quat = parent * local → set local = parent^-1 * camera so world = camera
@@ -2336,7 +2341,8 @@ function loop() {
     } catch (err) { console.error('Render error:', err); }
   }
 
-  renderer.render(scene, camera);
+  pp.tick(now);
+  pp.composer.render();
 }
 
 loop();
