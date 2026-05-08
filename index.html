@@ -113,8 +113,8 @@
     #settings-panel h3 { font-size: 16px; letter-spacing: 3px; text-transform: uppercase; color: #ffdd44; }
     .setting-row { display: flex; align-items: center; gap: 12px; }
     .setting-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; width: 80px; }
-    #volume-slider { flex: 1; accent-color: #ffdd44; cursor: pointer; }
-    #volume-value { font-size: 12px; color: #fff; width: 36px; text-align: right; }
+    #volume-slider, #music-volume-slider { flex: 1; accent-color: #ffdd44; cursor: pointer; }
+    #volume-value, #music-volume-value { font-size: 12px; color: #fff; width: 36px; text-align: right; }
     #close-settings { background: #333; color: #fff; border: 1px solid #555; padding: 8px 20px; font-family: inherit; font-size: 13px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; border-radius: 3px; align-self: center; transition: background 0.15s; pointer-events: all; }
     #close-settings:hover { background: #555; }
 
@@ -390,6 +390,11 @@
         <span class="setting-label">Volume</span>
         <input type="range" id="volume-slider" min="0" max="100" value="55" />
         <span id="volume-value">55%</span>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">Music</span>
+        <input type="range" id="music-volume-slider" min="0" max="100" value="40" />
+        <span id="music-volume-value">40%</span>
       </div>
       <button id="close-settings">Resume</button>
       <button id="back-to-menu-btn" style="margin-top:8px;background:#c0392b;">Back to Menu</button>

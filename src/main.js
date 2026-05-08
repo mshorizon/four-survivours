@@ -150,18 +150,22 @@ function makePlayerMesh(slotColor, appearance = {}) {
   } else if (hat === 'beanie') {
     const bn = new THREE.Mesh(new THREE.BoxGeometry(0.50,0.30,0.50), bMat); bn.position.y = 1.64; g.add(bn);
   }
-  // Arms — pivot at shoulder so rotation extends arms forward
-  const armLPivot = new THREE.Group(); armLPivot.position.set(-0.34, 0.92, 0); armLPivot.rotation.x = -0.75;
+  // Arms — angled inward toward weapon grip
+  const armLPivot = new THREE.Group(); armLPivot.position.set(-0.22, 0.92, 0); armLPivot.rotation.x = -1.10; armLPivot.rotation.z = 0.40;
   const armLMesh = new THREE.Mesh(new THREE.BoxGeometry(0.14,0.40,0.14), sMat); armLMesh.position.y = -0.20; armLMesh.castShadow = true; armLMesh.receiveShadow = true;
   armLPivot.add(armLMesh); g.add(armLPivot);
-  const armRPivot = new THREE.Group(); armRPivot.position.set( 0.34, 0.92, 0); armRPivot.rotation.x = -0.75;
+  const armRPivot = new THREE.Group(); armRPivot.position.set( 0.22, 0.92, 0); armRPivot.rotation.x = -0.90; armRPivot.rotation.z = -0.45;
   const armRMesh = new THREE.Mesh(new THREE.BoxGeometry(0.14,0.40,0.14), sMat); armRMesh.position.y = -0.20; armRMesh.castShadow = true; armRMesh.receiveShadow = true;
   armRPivot.add(armRMesh); g.add(armRPivot);
-  // Weapon in front where hands meet (computed from arm pivot at -0.75 rad)
+  // Weapon holder with hands gripping it
   const weaponHolder = new THREE.Group();
   weaponHolder.position.set(0.08, 0.64, 0.30);
   const wMesh = makeWeaponMesh('pistol');
   weaponHolder.add(wMesh);
+  const hMat = new THREE.MeshLambertMaterial({ color: skinCol, emissive: skinCol, emissiveIntensity: 0.45 });
+  const handGeo = new THREE.BoxGeometry(0.10, 0.09, 0.10);
+  const handR = new THREE.Mesh(handGeo, hMat); handR.position.set(0.05, -0.08, 0.05); weaponHolder.add(handR);
+  const handL = new THREE.Mesh(handGeo, hMat); handL.position.set(-0.04, -0.01, 0.25); weaponHolder.add(handL);
   g.add(weaponHolder);
   g.legL = legL; g.legR = legR;
   g.armL = armLPivot; g.armR = armRPivot;
@@ -586,8 +590,14 @@ function syncPlayers(players, dt) {
     const ws = Math.sin(ent.walkTime);
     if (mesh.legL) mesh.legL.rotation.x =  ws * 0.50;
     if (mesh.legR) mesh.legR.rotation.x = -ws * 0.50;
-    if (mesh.armL) mesh.armL.rotation.x = -0.75 - ws * 0.20;
-    if (mesh.armR) mesh.armR.rotation.x = -0.75 + ws * 0.20;
+    const isLocal = p.id === net.playerId;
+    if (isLocal) _recoilAmt = Math.max(0, _recoilAmt - dt * 0.9);
+    const ra = isLocal ? _recoilAmt : 0;
+    if (mesh.armL) { mesh.armL.rotation.x = -1.10 - ws * 0.20 + ra * 1.2; mesh.armL.rotation.z = 0.40; }
+    if (mesh.armR) { mesh.armR.rotation.x = -0.90 + ws * 0.20 + ra * 1.2; mesh.armR.rotation.z = -0.45; }
+    if (mesh.weaponHolder) {
+      mesh.weaponHolder.position.z = 0.30 - ra;
+    }
     ent.prevX = p.x; ent.prevZ = p.z;
 
     const isPinned = !!(p.pinnedBy || p.pulledBy);
@@ -932,6 +942,7 @@ const $pingMenu = document.getElementById('ping-menu');
 let _prevEnemyMap = new Map(); // id → {x,z,hp,type}
 let _prevMyHp     = PLAYER_MAX_HP;
 let _shootCdLocal = 0; // local cooldown to deduplicate muzzle flash
+let _recoilAmt    = 0; // visual weapon kickback (Z units, decays to 0)
 
 function applyEffects(state, dt) {
   const me = state.players?.find(p => p.id === net.playerId);
@@ -945,6 +956,8 @@ function applyEffects(state, dt) {
       _shootCdLocal = fw;
       vfx.muzzleFlash(me.x, me.z, me.angle, weapon);
       audio.shoot(weapon);
+      const rawR = WEAPONS[weapon]?.recoil ?? 2.5;
+      _recoilAmt = Math.min(rawR / 50 + 0.10, 0.22);
     }
   }
 
@@ -1208,6 +1221,7 @@ net.socket.on('gameStart', ({ wave, mapId, fogEnabled }) => {
   _prevMyHp      = PLAYER_MAX_HP;
   _prevEnemyMap  = new Map();
   _shootCdLocal  = 0;
+  _recoilAmt     = 0;
   audio.startAmbient?.(mapId);
   // Reset safe room UI
   const srEl = document.getElementById('safe-room-status');
@@ -1613,6 +1627,7 @@ net.onVictory = ({ wave, survivalTime, players }) => {
   });
   document.getElementById('vic-wait-status').textContent = 'Waiting for all players...';
   document.getElementById('victory').style.display = 'flex';
+  audio.stopAmbient?.();
   audio.victory();
 };
 
@@ -1819,9 +1834,15 @@ document.getElementById('reset-server-btn')?.addEventListener('click', async () 
   _returnToLobby();
 });
 
-// ── Volume slider ─────────────────────────────────────────────────────────────
+// ── Volume sliders ────────────────────────────────────────────────────────────
 document.getElementById('volume-slider')?.addEventListener('input', (e) => {
   audio.setVolume(Number(e.target.value) / 100);
+  document.getElementById('volume-value').textContent = `${e.target.value}%`;
+});
+
+document.getElementById('music-volume-slider')?.addEventListener('input', (e) => {
+  audio.setMusicVolume(Number(e.target.value) / 100);
+  document.getElementById('music-volume-value').textContent = `${e.target.value}%`;
 });
 
 // ── Public room list ──────────────────────────────────────────────────────────
