@@ -67,7 +67,7 @@ export class GameRoom {
     this._readySet   = new Set();
     this._votes      = new Map();
     this._fogVotes        = new Map(); // socketId → 'yes' | 'no'
-    this.fogEnabled       = false;
+    this.fogEnabled       = true;
     this._difficultyVotes = new Map(); // socketId → 'easy' | 'normal' | 'hard'
     this.difficultySpeedMult = DIFFICULTY_SETTINGS.easy.speedMult;
     this.difficultyHpMult    = DIFFICULTY_SETTINGS.easy.hpMult;
@@ -200,7 +200,7 @@ export class GameRoom {
       _perkDamageMult: 1.0, _perkDamageTaken: 1.0, _perkDashCdBonus: 0,
     });
     this._votes.set(socket.id, 'forest_trail');
-    this._fogVotes.set(socket.id, 'no');
+    this._fogVotes.set(socket.id, 'yes');
     this._difficultyVotes.set(socket.id, 'easy');
     socket.emit('joined', { playerId: socket.id, slot: slotIndex, roomId: this.id, token, appearance: this.players.get(socket.id).appearance });
     this._broadcastLobby();

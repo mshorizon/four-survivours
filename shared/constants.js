@@ -32,10 +32,10 @@ export const PLAYER_COLORS = [0x2266cc, 0xcc3322, 0x33aa44, 0xcc44aa];
 
 // ── Weapons ───────────────────────────────────────────────────────────────────
 export const WEAPONS = {
-  pistol:  { ammoMax: 15, reloadTime: 1.2, fireRate: 0.28, damage: 30,  speed: 22, range: 22, pellets: 1, spread: 0,    recoil: 2.5  },
-  shotgun: { ammoMax:  6, reloadTime: 1.8, fireRate: 0.75, damage: 18,  speed: 16, range: 10, pellets: 5, spread: 0.20, recoil: 12.0 },
-  ak47:    { ammoMax: 30, reloadTime: 2.0, fireRate: 0.07, damage: 25,  speed: 28, range: 30, pellets: 1, spread: 0,    recoil: 1.5  },
-  sniper:  { ammoMax:  5, reloadTime: 3.2, fireRate: 1.6,  damage: 150, speed: 40, range: 50, pellets: 1, spread: 0,    recoil: 8.0  },
+  pistol:  { ammoMax: 15, reloadTime: 1.2, fireRate: 0.28, damage: 30,  speed: 28.6, range: 22, pellets: 1, spread: 0,    recoil: 1.75 },
+  shotgun: { ammoMax:  6, reloadTime: 1.8, fireRate: 0.75, damage: 18,  speed: 20.8, range: 10, pellets: 5, spread: 0.20, recoil: 8.4  },
+  ak47:    { ammoMax: 30, reloadTime: 2.0, fireRate: 0.07, damage: 25,  speed: 36.4, range: 30, pellets: 1, spread: 0,    recoil: 1.05 },
+  sniper:  { ammoMax:  5, reloadTime: 3.2, fireRate: 1.6,  damage: 150, speed: 52,   range: 50, pellets: 1, spread: 0,    recoil: 5.6  },
 };
 
 export const WEAPON_PICKUPS_BY_MAP = {
@@ -55,7 +55,6 @@ export const WEAPON_PICKUPS_BY_MAP = {
     { id: 'wp_i2', weapon: 'shotgun', x: -8,  z: -8  },
   ],
   forest_trail: [
-    { id: 'wp_ft0', weapon: 'shotgun', x: 14,  z: 13  },
     { id: 'wp_ft1', weapon: 'ak47',   x:  2,  z: -3  },
     { id: 'wp_ft2', weapon: 'shotgun', x: -7,  z: -12 },
   ],
@@ -203,7 +202,7 @@ export const ACID_DAMAGE = 20;
 export const FIRE_RATE          = 0.28;
 export const AMMO_MAX           = 15;
 export const RELOAD_TIME        = 1.2;
-export const BULLET_SPEED       = 22;
+export const BULLET_SPEED       = 28.6;
 export const BULLET_RANGE       = 22;
 export const BULLET_DAMAGE      = 30;
 export const ENEMY_SPEED        = 2.8;

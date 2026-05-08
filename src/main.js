@@ -1143,6 +1143,8 @@ net.onJoined = ({ slot, roomId, token, reconnected, appearance }) => {
     document.getElementById('lobby').style.display     = 'none';
     document.getElementById('room-wait').style.display = 'flex';
     document.getElementById('wait-room-code').textContent = `Room: ${roomId ?? '—'}`;
+    _myFogVote = 'yes';
+    document.querySelectorAll('.fog-vote-btn').forEach(b => b.classList.toggle('voted', b.dataset.fog === 'yes'));
   }
   // Re-sync ready state so server stays in sync after any reconnect or auto-rejoin
   const wasReady = _isReady || _goReady || _vicReady;
